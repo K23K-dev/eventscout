@@ -1,0 +1,1 @@
+"""EventScout backend."""

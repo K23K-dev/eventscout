@@ -1,0 +1,24 @@
+{
+  "name": "eventscout",
+  "private": true,
+  "packageManager": "pnpm@10.21.0",
+  "engines": {
+    "node": ">=22.15.0 <23",
+    "pnpm": "10.21.0"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @eventscout/web dev",
+    "dev:api": "uv run --directory apps/api uvicorn eventscout_api.main:app --reload --host 127.0.0.1 --port 8000",
+    "lint": "pnpm --filter @eventscout/web lint",
+    "typecheck": "pnpm --filter @eventscout/web typecheck",
+    "build": "pnpm --filter @eventscout/web build",
+    "check:api": "uv run --directory apps/api --locked ruff check . && uv run --directory apps/api --locked ruff format --check . && uv run --directory apps/api --locked mypy && uv run --directory apps/api --locked pytest",
+    "check": "pnpm lint && pnpm typecheck && pnpm build && pnpm check:api",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:status": "supabase status"
+  },
+  "devDependencies": {
+    "supabase": "2.117.0"
+  }
+}
