@@ -11,9 +11,10 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import http_url, issue_message, localize, node_text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -21,17 +22,13 @@ _ZONE = ZoneInfo("America/New_York")
 
 
 def _text(node: Tag | None) -> str:
-    return " ".join(unescape(node.get_text(" ", strip=True)).split()) if node else ""
+    return node_text(node, decode_entities=True)
 
 
 def _url(value: object, base: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError("Missing public event link")
-    url = urljoin(base, unescape(value))
-    parts = urlsplit(url)
-    if parts.scheme not in {"http", "https"} or parts.username or parts.password:
-        raise ValueError("Invalid public event link")
-    return str(HttpUrl(url))
+    return str(http_url(urljoin(base, unescape(value))))
 
 
 def _event_schema(soup: BeautifulSoup) -> dict[str, Any]:
@@ -69,10 +66,7 @@ def _showing_start(showing: Tag) -> datetime | None:
         year = _text(showing.select_one(".m-date__year")).strip(", ")
         clock = re.sub(r"^at\s*", "", _text(showing.select_one(".m-date__hour")), flags=re.I)
         value = f"{month} {day} {year} {clock.replace(' ', '')}"
-    local = datetime.strptime(value, "%B %d %Y %I:%M%p").replace(tzinfo=_ZONE)
-    if local.utcoffset() != local.replace(fold=1).utcoffset():
-        raise ValueError("Ambiguous published showing time at a DST transition")
-    return local.astimezone(UTC)
+    return localize(datetime.strptime(value, "%B %d %Y %I:%M%p"), _ZONE).astimezone(UTC)
 
 
 def _parse_detail(
@@ -249,14 +243,7 @@ async def collect(
                     await fetch_bytes(client, url), url, calendar_url, default_venue, window_start
                 )
             except (httpx.HTTPError, TimeoutError, ValueError, TypeError) as exc:
-                message = (
-                    "Invalid event fields"
-                    if isinstance(exc, ValidationError)
-                    else str(exc)
-                    if isinstance(exc, ValueError)
-                    else type(exc).__name__
-                )
-                return ParseIssue(url, message)
+                return ParseIssue(url, issue_message(exc))
 
     identities: set[str] = set()
     for response in await asyncio.gather(*(detail(url) for url in sorted(urls))):

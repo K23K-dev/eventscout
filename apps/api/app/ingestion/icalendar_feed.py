@@ -2,32 +2,32 @@
 
 import re
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
-from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
-from bs4 import BeautifulSoup
 from icalendar import Calendar, Event
-from pydantic import HttpUrl, JsonValue, ValidationError
+from pydantic import JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import html_text, http_url, validation_message
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
 _TIMEZONE = ZoneInfo("America/New_York")
 
 
-def _text(event: Event, key: str) -> str:
+def calendar_text(event: Event, key: str) -> str:
     value = event.get(key)
     if isinstance(value, list):
         raise ValueError(f"Repeated {key} property")
     return str(value).strip() if value is not None else ""
 
 
-def _day_or_time(event: Event, key: str) -> date | datetime | None:
+def calendar_date(event: Event, key: str) -> date | datetime | None:
     if key not in event:
         return None
     value: object = event.decoded(key)
@@ -40,25 +40,60 @@ def _day_or_time(event: Event, key: str) -> date | datetime | None:
     raise ValueError(f"Invalid {key} property")
 
 
-def _url(value: str) -> HttpUrl:
-    parts = urlsplit(value)
-    if parts.scheme not in {"http", "https"} or parts.username or parts.password:
-        raise ValueError("Event URLs must be HTTP(S) without credentials")
-    return HttpUrl(value)
+def calendar_categories(event: Event) -> list[str]:
+    categories = event.get("CATEGORIES")
+    groups = categories if isinstance(categories, list) else [categories] if categories else []
+    return sorted({str(value).strip() for group in groups for value in group.cats if str(value)})
+
+
+def calendar_events(data: bytes) -> list[Event]:
+    try:
+        calendar = Calendar.from_ical(data)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Publisher returned invalid iCalendar data") from exc
+    if calendar.name != "VCALENDAR":
+        raise ValueError("Expected a VCALENDAR subscription feed")
+    return [part for part in calendar.walk("VEVENT") if isinstance(part, Event)]
+
+
+def parse_calendar_events(
+    components: list[Event],
+    parse_event: Callable[[Event], ParsedEvent],
+    *,
+    skip_blank: bool = False,
+) -> ParsedFeed:
+    result = ParsedFeed(events=[], records_seen=len(components), issues=[])
+    identities = Counter(str(part.get("UID", "")) for part in components)
+    for part in components:
+        uid = str(part.get("UID", ""))
+        # Communico emits one entirely blank placeholder when a branch has no events.
+        if skip_blank and not uid and not str(part.get("SUMMARY", "")):
+            result.records_seen -= 1
+            continue
+        if identities[uid] > 1:
+            result.issues.append(ParseIssue(uid or None, "Repeated calendar occurrence UID"))
+            continue
+        try:
+            result.events.append(parse_event(part))
+        except ValidationError as exc:
+            result.issues.append(ParseIssue(uid or None, validation_message(exc)))
+        except (ValueError, TypeError, AttributeError) as exc:
+            result.issues.append(ParseIssue(uid or None, str(exc)))
+    return result
 
 
 def _parse_event(
     event: Event, *, fallback_url: str, event_base_url: str | None, midnight_all_day: bool
 ) -> ParsedEvent:
-    uid = _text(event, "UID")
+    uid = calendar_text(event, "UID")
     if not uid:
         raise ValueError("Missing stable calendar UID")
     if any(key in event for key in ("RRULE", "RDATE", "EXDATE", "RECURRENCE-ID")):
         raise ValueError("Unexpanded calendar recurrence is unsupported")
     if "DURATION" in event:
         raise ValueError("Calendar duration needs an explicit supported end time")
-    starts = _day_or_time(event, "DTSTART")
-    ends = _day_or_time(event, "DTEND")
+    starts = calendar_date(event, "DTSTART")
+    ends = calendar_date(event, "DTEND")
     published_end = ends
     if starts is None:
         raise ValueError("Missing DTSTART")
@@ -79,23 +114,20 @@ def _parse_event(
         # public detail page's explicit "All day" display, including DST changes.
         starts = starts.astimezone(_TIMEZONE).date()
         ends = ends.astimezone(_TIMEZONE).date() + timedelta(days=1)
-    modified = _day_or_time(event, "LAST-MODIFIED")
+    modified = calendar_date(event, "LAST-MODIFIED")
     if modified is not None and not isinstance(modified, datetime):
         raise ValueError("LAST-MODIFIED must be a timestamp")
-    published_url = _text(event, "URL")
+    published_url = calendar_text(event, "URL")
     link = published_url or fallback_url
     if event_base_url:
         if not uid.isdecimal():
             raise ValueError("Expected a numeric library event ID")
         link = event_base_url + uid
-    title = _text(event, "SUMMARY")
-    description = _text(event, "DESCRIPTION")
+    title = calendar_text(event, "SUMMARY")
+    description = calendar_text(event, "DESCRIPTION")
     if re.search(r"</?(?:p|div|br|span|a|script|style)(?:\s|>|/)", description, re.I):
-        soup = BeautifulSoup(description, "html.parser")
-        for tag in soup.select("script, style"):
-            tag.decompose()
-        description = " ".join(soup.get_text(" ", strip=True).split())
-    venue = _text(event, "LOCATION").strip(" -")
+        description = html_text(description)
+    venue = calendar_text(event, "LOCATION").strip(" -")
     if re.search(r"\bsign in\b|^tbd$|^tba$|^see (?:the )?website$", venue, re.I):
         venue = ""
     location_kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
@@ -103,11 +135,9 @@ def _parse_event(
         location_kind = (
             "online" if re.match(r"^(?:online|virtual|zoom)\b", venue, re.I) else "in_person"
         )
-    categories = event.get("CATEGORIES")
-    groups = categories if isinstance(categories, list) else [categories] if categories else []
-    tags = sorted({str(value).strip() for group in groups for value in group.cats if str(value)})
+    tags = calendar_categories(event)
     raw_tags: list[JsonValue] = list(tags)
-    status = _text(event, "STATUS").upper()
+    status = calendar_text(event, "STATUS").upper()
     if status not in {"", "CONFIRMED", "TENTATIVE", "CANCELLED"}:
         raise ValueError("Unsupported calendar status")
     all_day = not isinstance(starts, datetime)
@@ -124,7 +154,7 @@ def _parse_event(
         location_kind=location_kind,
         region="atlanta",
         tags=tags,
-        source_url=_url(link),
+        source_url=http_url(link),
         status="cancelled"
         if status == "CANCELLED" or re.match(r"^(?:\[|\()?(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
@@ -137,7 +167,7 @@ def _parse_event(
             "uid": uid,
             "summary": title,
             "description": description,
-            "location": _text(event, "LOCATION"),
+            "location": calendar_text(event, "LOCATION"),
             "url": link,
             "dtstart": starts.isoformat(),
             "dtend": published_end.isoformat() if published_end else None,
@@ -156,42 +186,16 @@ def parse_feed(
     event_base_url: str | None = None,
     midnight_all_day: bool = False,
 ) -> ParsedFeed:
-    try:
-        calendar = Calendar.from_ical(data)
-    except (ValueError, TypeError) as exc:
-        raise ValueError("Publisher returned invalid iCalendar data") from exc
-    if calendar.name != "VCALENDAR":
-        raise ValueError("Expected a VCALENDAR subscription feed")
-    components = [part for part in calendar.walk("VEVENT") if isinstance(part, Event)]
-    result = ParsedFeed(events=[], records_seen=len(components), issues=[])
-    identities = Counter(str(part.get("UID", "")) for part in components)
-    for part in components:
-        uid = str(part.get("UID", ""))
-        # Communico emits one entirely blank placeholder when a branch has no events.
-        if event_base_url and not uid and not str(part.get("SUMMARY", "")):
-            result.records_seen -= 1
-            continue
-        if identities[uid] > 1:
-            result.issues.append(ParseIssue(uid or None, "Repeated calendar occurrence UID"))
-            continue
-        try:
-            result.events.append(
-                _parse_event(
-                    part,
-                    fallback_url=fallback_url,
-                    event_base_url=event_base_url,
-                    midnight_all_day=midnight_all_day,
-                )
-            )
-        except ValidationError as exc:
-            fields = ", ".join(
-                ".".join(str(value) for value in error["loc"]) or "URL"
-                for error in exc.errors(include_input=False)
-            )
-            result.issues.append(ParseIssue(uid or None, f"Invalid event fields: {fields}"))
-        except (ValueError, TypeError, AttributeError) as exc:
-            result.issues.append(ParseIssue(uid or None, str(exc)))
-    return result
+    return parse_calendar_events(
+        calendar_events(data),
+        lambda event: _parse_event(
+            event,
+            fallback_url=fallback_url,
+            event_base_url=event_base_url,
+            midnight_all_day=midnight_all_day,
+        ),
+        skip_blank=bool(event_base_url),
+    )
 
 
 async def collect(

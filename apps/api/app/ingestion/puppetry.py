@@ -3,7 +3,7 @@
 import asyncio
 import re
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl, JsonValue
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import localize, node_text
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -21,8 +22,7 @@ _ACTIVITIES = {"Puppet Shows", "Special Events", "Workshops & Classes"}
 
 
 def _text(parent: Tag, selector: str) -> str:
-    node = parent.select_one(selector)
-    return " ".join(node.get_text(" ", strip=True).split()) if node else ""
+    return node_text(parent.select_one(selector))
 
 
 def _link(card: Tag, selector: str) -> str:
@@ -47,12 +47,7 @@ def _performance(card: Tag, feed_url: str) -> ParsedEvent:
     title = _text(card, "h3")
     published_time = _text(card, ".calendar-event-popover__date")
     naive = datetime.strptime(published_time, "%A, %B %d, %Y at %I:%M %p")
-    local = naive.replace(tzinfo=_ZONE)
-    if (
-        local.astimezone(UTC).astimezone(_ZONE).replace(tzinfo=None) != naive
-        or local.utcoffset() != naive.replace(tzinfo=_ZONE, fold=1).utcoffset()
-    ):
-        raise ValueError("Ambiguous or nonexistent published performance time")
+    local = localize(naive, _ZONE)
     summary = _text(card, ".calendar-event-popover__summary")
     category = _text(card, ".calendar-event-popover__type")
     return ParsedEvent(

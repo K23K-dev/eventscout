@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -14,6 +14,8 @@ from icalendar import Calendar
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import node_text as _text
+from app.ingestion.parsing import publisher_url
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -32,21 +34,8 @@ class _Listing:
     title: str
 
 
-def _text(node: Tag | None) -> str:
-    return " ".join(node.get_text(" ", strip=True).split()) if node else ""
-
-
 def _event_url(base: str, value: str, *, path: str = "/events/details/") -> str:
-    parts = urlsplit(urljoin(base, value))
-    if (
-        parts.scheme != "https"
-        or parts.hostname != urlsplit(base).hostname
-        or parts.username
-        or parts.password
-        or not parts.path.startswith(path)
-    ):
-        raise ValueError("Expected a link on the publisher's public calendar")
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return publisher_url(value, base, path)
 
 
 def _listing(html: bytes, base: str) -> tuple[list[_Listing], list[ParseIssue]]:

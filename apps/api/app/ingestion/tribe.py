@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import html_text, issue_message
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -36,12 +37,7 @@ _ARTSATL_EXCLUDED_SERIES = {
 
 
 def _text(value: object) -> str:
-    if not isinstance(value, str):
-        return ""
-    soup = BeautifulSoup(value, "html.parser")
-    for tag in soup.select("script, style"):
-        tag.decompose()
-    return " ".join(unescape(soup.get_text(" ", strip=True)).split())
+    return html_text(value, decode_entities=True)
 
 
 def _url(value: object, base: str) -> HttpUrl | None:
@@ -250,14 +246,9 @@ async def collect(
             if not events and pages > 0:
                 raise ValueError("Calendar returned an unexpectedly empty page")
         except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-            message = (
-                f"HTTP {exc.response.status_code}"
-                if isinstance(exc, httpx.HTTPStatusError)
-                else str(exc)
-                if isinstance(exc, ValueError)
-                else type(exc).__name__
+            result.issues.append(
+                ParseIssue(None, f"Calendar page {page} failed: {issue_message(exc)}")
             )
-            result.issues.append(ParseIssue(None, f"Calendar page {page} failed: {message}"))
             break
         result.records_seen += len(events)
         for item in events:

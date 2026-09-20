@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl, JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import html_text, http_url, validation_message
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -144,10 +145,7 @@ def _decode(value: str) -> str:
 
 
 def _text(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup.find_all(["script", "style"]):
-        tag.decompose()
-    return " ".join(_decode(soup.get_text(" ", strip=True)).split())
+    return " ".join(_decode(html_text(html)).split())
 
 
 def _sections(html: str) -> tuple[str, dict[str, str]]:
@@ -204,11 +202,7 @@ def _event_time(html: str) -> tuple[datetime | None, datetime | None, date | Non
 
 def _safe_url(value: str, *, base: str = "") -> HttpUrl:
     decoded = _decode(value).strip()
-    url = urljoin(base, decoded) if base else decoded
-    parts = urlsplit(url)
-    if parts.scheme not in {"https", "http"} or parts.username or parts.password:
-        raise ValueError("Event links must be HTTP(S) URLs without embedded credentials")
-    return HttpUrl(url)
+    return http_url(urljoin(base, decoded) if base else decoded)
 
 
 def _description(prefix: str, sections: dict[str, str]) -> str:
@@ -426,11 +420,7 @@ def parse_feed(xml: bytes) -> ParsedFeed:
         try:
             parsed = _parse_item(item, external_id)
         except ValidationError as exc:
-            fields = ", ".join(
-                ".".join(str(part) for part in error["loc"]) or "URL"
-                for error in exc.errors(include_input=False)
-            )
-            result.issues.append(ParseIssue(external_id, f"Invalid event fields: {fields}"))
+            result.issues.append(ParseIssue(external_id, validation_message(exc)))
             continue
         except ValueError as exc:
             result.issues.append(ParseIssue(external_id, str(exc)))

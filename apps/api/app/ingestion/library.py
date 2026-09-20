@@ -9,9 +9,10 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import http_url, issue_message, localize
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -32,12 +33,10 @@ def _text(parent: Tag | BeautifulSoup, selector: str, *, required: bool = False)
 
 def _url(value: str, *, library_only: bool = False) -> str:
     absolute = urljoin(LISTING_URL, value)
-    parts = urlsplit(absolute)
-    if parts.scheme not in {"http", "https"} or parts.username or parts.password:
-        raise ValueError("Event links must be HTTP(S) without embedded credentials")
-    if library_only and parts.hostname != "library.gatech.edu":
+    url = http_url(absolute)
+    if library_only and urlsplit(absolute).hostname != "library.gatech.edu":
         raise ValueError("Library calendar link unexpectedly leaves its publisher")
-    return str(HttpUrl(absolute))
+    return str(url)
 
 
 def _href(tag: Tag | None) -> str:
@@ -48,10 +47,7 @@ def _href(tag: Tag | None) -> str:
 
 def _local_time(day: str, clock: str) -> datetime:
     naive = datetime.strptime(f"{day} {clock}", "%d %B %Y %I:%M %p")
-    value = naive.replace(tzinfo=_TIMEZONE)
-    if value.utcoffset() != value.replace(fold=1).utcoffset():
-        raise ValueError("Ambiguous or nonexistent event time at a daylight-saving transition")
-    return value.astimezone(UTC)
+    return localize(naive, _TIMEZONE).astimezone(UTC)
 
 
 def _location_kind(venue: str) -> Literal["in_person", "online", "hybrid", "unknown"]:
@@ -219,15 +215,8 @@ async def collect(
             result.requests += 1
             try:
                 return _parse_detail(await fetch_bytes(client, url), url, venue)
-            except (httpx.HTTPError, TimeoutError, ValidationError, ValueError) as exc:
-                message = (
-                    "Invalid event fields"
-                    if isinstance(exc, ValidationError)
-                    else str(exc)
-                    if isinstance(exc, ValueError)
-                    else type(exc).__name__
-                )
-                return ParseIssue(url, message)
+            except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+                return ParseIssue(url, issue_message(exc))
 
     parsed = await asyncio.gather(*(detail(url, venue) for url, venue in listings.items()))
     identities: set[str] = set()

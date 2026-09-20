@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import localize, node_text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -30,7 +31,7 @@ class _Listing:
 
 
 def _text(node: Tag | BeautifulSoup | None) -> str:
-    return " ".join(unescape(node.get_text(" ", strip=True)).split()) if node else ""
+    return node_text(node, decode_entities=True)
 
 
 def _url(value: str, *, internal: bool = False) -> str:
@@ -87,13 +88,7 @@ def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]
 
 def _local_time(day: str, clock: str) -> datetime:
     naive = datetime.strptime(f"{day} {clock}", "%A, %B %d, %Y %I:%M %p")
-    aware = naive.replace(tzinfo=_TIMEZONE)
-    if (
-        aware.astimezone(UTC).astimezone(_TIMEZONE).replace(tzinfo=None) != naive
-        or aware.utcoffset() != naive.replace(tzinfo=_TIMEZONE, fold=1).utcoffset()
-    ):
-        raise ValueError("Event wall time is ambiguous at a daylight-saving transition")
-    return aware.astimezone(UTC)
+    return localize(naive, _TIMEZONE).astimezone(UTC)
 
 
 def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:

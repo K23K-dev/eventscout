@@ -9,9 +9,11 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import http_url, issue_message, localize
+from app.ingestion.parsing import node_text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -20,38 +22,18 @@ _EARL = "https://badearl.com/"
 _FERNBANK = "https://www.fernbankmuseum.org/events/calendar-of-events/"
 
 
-def _text(node: Tag | None) -> str:
-    return " ".join(node.get_text(" ", strip=True).split()) if node else ""
-
-
 def _url(value: object, base: str) -> HttpUrl:
     if not isinstance(value, str) or not value:
         raise ValueError("Missing published event link")
-    url = urljoin(base, value)
-    parts = urlsplit(url)
-    if parts.scheme not in {"https", "http"} or parts.username or parts.password:
-        raise ValueError("Invalid event link")
-    return HttpUrl(url)
+    return http_url(urljoin(base, value))
 
 
 def _local(value: str, pattern: str) -> datetime:
-    local = datetime.strptime(value, pattern).replace(tzinfo=_ZONE)
-    if local.utcoffset() != local.replace(fold=1).utcoffset():
-        raise ValueError("Ambiguous event time at daylight-saving transition")
-    return local.astimezone(UTC)
+    return localize(datetime.strptime(value, pattern), _ZONE).astimezone(UTC)
 
 
 def _issue(identity: str | None, exc: Exception) -> ParseIssue:
-    message = (
-        f"HTTP {exc.response.status_code}"
-        if isinstance(exc, httpx.HTTPStatusError)
-        else "Invalid event fields"
-        if isinstance(exc, ValidationError)
-        else str(exc)
-        if isinstance(exc, ValueError)
-        else type(exc).__name__
-    )
-    return ParseIssue(identity, message)
+    return ParseIssue(identity, issue_message(exc))
 
 
 def _earl_event(card: Tag) -> ParsedEvent:

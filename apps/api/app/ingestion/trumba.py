@@ -5,7 +5,6 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 from html import unescape
 from typing import Literal
-from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -13,6 +12,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import BaseModel, Field, HttpUrl, JsonValue, TypeAdapter, ValidationError
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import html_text, http_url, validation_message
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -47,10 +47,7 @@ class _Event(BaseModel):
 
 
 def _text(value: str) -> str:
-    soup = BeautifulSoup(value, "html.parser")
-    for tag in soup.find_all(["script", "style"]):
-        tag.decompose()
-    return " ".join(unescape(soup.get_text(" ", strip=True)).split())
+    return html_text(value, decode_entities=True)
 
 
 def _url(value: str) -> HttpUrl:
@@ -60,11 +57,7 @@ def _url(value: str) -> HttpUrl:
         href = anchor.get("href") if isinstance(anchor, Tag) else None
     if not isinstance(href, str):
         raise ValueError("Registration link has no URL")
-    href = unescape(href)
-    parts = urlsplit(href)
-    if parts.scheme not in {"https", "http"} or parts.username or parts.password:
-        raise ValueError("Registration links must be HTTP(S) without embedded credentials")
-    return HttpUrl(href)
+    return http_url(unescape(href))
 
 
 def _timestamp(value: str, offset: str) -> datetime:
@@ -192,11 +185,7 @@ def parse_feed(payload: bytes, *, feed_url: str = FEED_URL) -> ParsedFeed:
         try:
             result.events.append(_parse_item(raw, feed_url))
         except ValidationError as exc:
-            fields = ", ".join(
-                ".".join(str(part) for part in error["loc"]) or "URL"
-                for error in exc.errors(include_input=False)
-            )
-            result.issues.append(ParseIssue(external_id, f"Invalid event fields: {fields}"))
+            result.issues.append(ParseIssue(external_id, validation_message(exc)))
         except ValueError as exc:
             result.issues.append(ParseIssue(external_id, str(exc)))
     return result

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -14,11 +14,11 @@ from icalendar import Calendar
 from pydantic import HttpUrl, JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import publisher_url
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
 LISTING_URL = "https://members.tagonline.org/calendar"
-_HOST = "members.tagonline.org"
 
 
 @dataclass(frozen=True)
@@ -34,16 +34,7 @@ def _text(value: str | Tag | None) -> str:
 
 
 def _internal_url(value: str, prefix: str) -> str:
-    parts = urlsplit(urljoin(LISTING_URL, value))
-    if (
-        parts.scheme != "https"
-        or parts.hostname != _HOST
-        or parts.username
-        or parts.password
-        or not parts.path.startswith(prefix)
-    ):
-        raise ValueError("Expected a public TAG calendar link")
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return publisher_url(value, LISTING_URL, prefix)
 
 
 def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue]]:

@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import localize
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -29,13 +30,7 @@ def _local_time(year: int, date_text: str, clock: str) -> datetime:
     # The requested month supplies the year that the publisher omits in its cards.
     normalized = clock.strip().upper()
     pattern = "%Y %a %b %d %I:%M%p" if ":" in normalized else "%Y %a %b %d %I%p"
-    naive = datetime.strptime(f"{year} {date_text} {normalized}", pattern)
-    aware = naive.replace(tzinfo=EASTERN)
-    if aware.astimezone(UTC).astimezone(EASTERN).replace(tzinfo=None) != naive:
-        raise ValueError("Nonexistent local event time")
-    if aware.utcoffset() != naive.replace(tzinfo=EASTERN, fold=1).utcoffset():
-        raise ValueError("Ambiguous local event time")
-    return aware
+    return localize(datetime.strptime(f"{year} {date_text} {normalized}", pattern), EASTERN)
 
 
 def _tree_event(card: Tag, year: int, month: int, feed_url: str) -> ParsedEvent:
