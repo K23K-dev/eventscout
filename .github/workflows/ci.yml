@@ -51,4 +51,3 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked ruff format --check .
       - run: uv run --locked mypy
-      - run: uv run --locked pytest

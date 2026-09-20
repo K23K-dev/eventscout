@@ -3,6 +3,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Link, Route, Routes } from 'react-router-dom'
 import { App } from './App'
+import { PageShell } from './components/PageShell'
 import './styles.css'
 
 const queryClient = new QueryClient()
@@ -14,10 +15,12 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/" element={<App />} />
           <Route path="*" element={
-            <main className="page-shell">
-              <h1>Page not found.</h1>
-              <Link className="text-link" to="/">Back to EventScout</Link>
-            </main>
+            <PageShell>
+              <main className="flex flex-col">
+                <h1 className="font-display text-display">Page not found.</h1>
+                <Link className="mt-6 text-scout underline" to="/">Back to EventScout</Link>
+              </main>
+            </PageShell>
           } />
         </Routes>
       </BrowserRouter>

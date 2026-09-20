@@ -14,18 +14,10 @@ dist/
 __pycache__/
 *.py[cod]
 *.egg-info/
-.pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.coverage
-htmlcov/
 
-# Local services and verification artifacts
-supabase/.temp/
-supabase/.branches/
-coverage/
-playwright-report/
-test-results/
+# Logs
 *.log
 
 # Editors and OS files

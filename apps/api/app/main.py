@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from eventscout_api.settings import Settings
+from app.settings import Settings
 
 
 class HealthResponse(BaseModel):
