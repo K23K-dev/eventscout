@@ -108,7 +108,19 @@ class EventStore:
             if await cursor.fetchone() is None:
                 raise InvalidRunError("run is missing or already finished")
 
-    async def upsert_event(self, observation: EventObservation) -> UpsertResult:
+    async def upsert_event(
+        self,
+        observation: EventObservation,
+        *,
+        canonical_event_id: UUID | None = None,
+        update_content: bool = True,
+    ) -> UpsertResult:
+        """Store provenance, optionally linking it to an existing canonical event.
+
+        Only the chosen source should update canonical content. Other sources can
+        refresh their observations with update_content=False without changing the
+        event's content version or creating an indexing job.
+        """
         self._require_idle()
         content_hash = observation.content.content_hash()
         values = _content_values(observation.content)
@@ -135,7 +147,22 @@ class EventStore:
                 identity,
             )
             record = await cursor.fetchone()
-            if record is None:
+            if record is not None:
+                if canonical_event_id is not None and record["event_id"] != canonical_event_id:
+                    raise ValueError("source record is already linked to another canonical event")
+                if observation.observed_at < record["observed_at"]:
+                    raise StaleObservationError(
+                        "observation is older than the last successful check"
+                    )
+                if (
+                    observation.source_updated_at is not None
+                    and record["source_updated_at"] is not None
+                    and observation.source_updated_at < record["source_updated_at"]
+                ):
+                    raise StaleObservationError("observation contains an older source revision")
+                canonical_event_id = record["event_id"]
+
+            if canonical_event_id is None:
                 cursor = await self._connection.execute(
                     sql.SQL(
                         "INSERT INTO eventscout.event_occurrences ({}, content_hash) "
@@ -145,6 +172,37 @@ class EventStore:
                 )
                 event = await cursor.fetchone()
                 assert event is not None
+                changed = True
+            else:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT id, content_version, content_hash FROM eventscout.event_occurrences
+                    WHERE id = %s FOR UPDATE
+                    """,
+                    (canonical_event_id,),
+                )
+                event = await cursor.fetchone()
+                if event is None:
+                    raise ValueError("canonical event does not exist")
+                changed = update_content and event["content_hash"] != content_hash
+                if (
+                    changed
+                    and record is not None
+                    and observation.observed_at == record["observed_at"]
+                ):
+                    raise StaleObservationError("conflicting content at the same observation time")
+                if changed:
+                    cursor = await self._connection.execute(
+                        sql.SQL(
+                            "UPDATE eventscout.event_occurrences SET {}, content_hash = %s "
+                            "WHERE id = %s RETURNING id, content_version"
+                        ).format(_CONTENT_ASSIGNMENTS),
+                        (*values, content_hash, event["id"]),
+                    )
+                    event = await cursor.fetchone()
+                    assert event is not None
+
+            if record is None:
                 cursor = await self._connection.execute(
                     """
                     INSERT INTO eventscout.source_records
@@ -163,58 +221,22 @@ class EventStore:
                 )
                 record = await cursor.fetchone()
                 assert record is not None
-                return UpsertResult(
-                    event_id=event["id"],
-                    source_record_id=record["id"],
-                    content_version=event["content_version"],
-                    changed=True,
+            else:
+                await self._connection.execute(
+                    """
+                    UPDATE eventscout.source_records
+                    SET observed_at = %s, source_updated_at = COALESCE(%s, source_updated_at),
+                        raw_payload = %s, run_id = %s, updated_at = clock_timestamp()
+                    WHERE id = %s
+                    """,
+                    (
+                        observation.observed_at,
+                        observation.source_updated_at,
+                        Jsonb(observation.raw_payload),
+                        observation.run_id,
+                        record["id"],
+                    ),
                 )
-
-            if observation.observed_at < record["observed_at"]:
-                raise StaleObservationError("observation is older than the last successful check")
-            if (
-                observation.source_updated_at is not None
-                and record["source_updated_at"] is not None
-                and observation.source_updated_at < record["source_updated_at"]
-            ):
-                raise StaleObservationError("observation contains an older source revision")
-            cursor = await self._connection.execute(
-                """
-                SELECT id, content_version, content_hash FROM eventscout.event_occurrences
-                WHERE id = %s FOR UPDATE
-                """,
-                (record["event_id"],),
-            )
-            event = await cursor.fetchone()
-            assert event is not None
-            changed = event["content_hash"] != content_hash
-            if changed and observation.observed_at == record["observed_at"]:
-                raise StaleObservationError("conflicting content at the same observation time")
-            if changed:
-                cursor = await self._connection.execute(
-                    sql.SQL(
-                        "UPDATE eventscout.event_occurrences SET {}, content_hash = %s "
-                        "WHERE id = %s RETURNING id, content_version"
-                    ).format(_CONTENT_ASSIGNMENTS),
-                    (*values, content_hash, event["id"]),
-                )
-                event = await cursor.fetchone()
-                assert event is not None
-            await self._connection.execute(
-                """
-                UPDATE eventscout.source_records
-                SET observed_at = %s, source_updated_at = COALESCE(%s, source_updated_at),
-                    raw_payload = %s, run_id = %s, updated_at = clock_timestamp()
-                WHERE id = %s
-                """,
-                (
-                    observation.observed_at,
-                    observation.source_updated_at,
-                    Jsonb(observation.raw_payload),
-                    observation.run_id,
-                    record["id"],
-                ),
-            )
             return UpsertResult(
                 event_id=event["id"],
                 source_record_id=record["id"],
@@ -224,7 +246,7 @@ class EventStore:
 
     async def _validate_run(self, run_id: UUID, source_id: UUID) -> None:
         cursor = await self._connection.execute(
-            "SELECT source_id, status FROM eventscout.ingestion_runs WHERE id = %s FOR UPDATE",
+            "SELECT source_id, status FROM eventscout.ingestion_runs WHERE id = %s FOR SHARE",
             (run_id,),
         )
         run = await cursor.fetchone()
