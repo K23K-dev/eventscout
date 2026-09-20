@@ -13,7 +13,6 @@ from app.storage.models import (
     EventObservation,
     Source,
     SourceInput,
-    StoredEvent,
     UpsertResult,
 )
 
@@ -252,25 +251,6 @@ class EventStore:
         run = await cursor.fetchone()
         if run is None or run["source_id"] != source_id or run["status"] != "running":
             raise InvalidRunError("run must be active and belong to the observation source")
-
-    async def get_event(self, event_id: UUID) -> StoredEvent | None:
-        self._require_idle()
-        cursor = await self._connection.execute(
-            sql.SQL(
-                "SELECT id, content_hash, content_version, {} "
-                "FROM eventscout.event_occurrences WHERE id = %s"
-            ).format(_COLUMN_NAMES),
-            (event_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return StoredEvent(
-            id=row["id"],
-            content=EventContent.model_validate({name: row[name] for name in _CONTENT_COLUMNS}),
-            content_version=row["content_version"],
-            content_hash=row["content_hash"],
-        )
 
 
 def _content_values(content: EventContent) -> tuple[Any, ...]:

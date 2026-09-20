@@ -1,16 +1,11 @@
 """Application entry point; startup requires no external services."""
 
-from typing import Literal
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
+from app.events.router import create_events_router
+from app.ingestion.sources import SOURCES
 from app.settings import Settings
-
-
-class HealthResponse(BaseModel):
-    status: Literal["ok"] = "ok"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -22,10 +17,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET"],
     )
 
-    @application.get("/health", response_model=HealthResponse, tags=["health"])
-    async def health() -> HealthResponse:
-        return HealthResponse()
+    @application.get("/health", tags=["health"])
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
 
+    application.include_router(
+        create_events_router(
+            config, tuple(slug for slug, source in SOURCES.items() if source.enabled)
+        )
+    )
     return application
 
 

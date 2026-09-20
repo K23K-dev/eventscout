@@ -206,14 +206,12 @@ async def collect(
     window_end: datetime,
     crawl_delay: float = 1,
     excluded_cities: frozenset[str] = frozenset(),
-    required_category: str | None = None,
     overlap_filters: bool = True,
 ) -> SourceCollection:
     """Read up to 100 pages, preserving published recurrence IDs and filtering locally.
 
     The API's overlapping-date filters include ongoing exhibitions. Perpetual
     self-guided attractions and events in explicitly excluded cities are omitted.
-    ``required_category`` supports publishers with several regional chapters.
     """
     result = SourceCollection(events=[], records_seen=0, requests=0, issues=[])
     seen: set[str] = set()
@@ -282,20 +280,11 @@ async def collect(
                 continue
             venue = item.get("venue")
             city = _text(venue.get("city")).casefold() if isinstance(venue, dict) else ""
-            categories = {
-                str(category.get("slug", ""))
-                for category in item.get("categories", [])
-                if isinstance(category, dict)
-            }
             text = _text(item.get("description"))
             evergreen = re.search(
                 r"\bself[ -]guided\b", str(item.get("title", "")), re.I
             ) and re.search(r"\b(?:any day|any time|at your own pace)\b", text, re.I)
-            if (
-                city in excluded_cities
-                or evergreen
-                or (required_category and required_category not in categories)
-            ):
+            if city in excluded_cities or evergreen:
                 skipped += 1
                 continue
             try:

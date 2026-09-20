@@ -2,7 +2,7 @@
 
 Event discovery for Georgia Tech and Atlanta, built with React, TypeScript, FastAPI, and Supabase.
 
-In development. Event ingestion is implemented; browsing and AI search are coming next.
+In development. Event ingestion and keyword search are implemented; the browsing UI and AI search are next.
 
 ## Development
 

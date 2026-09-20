@@ -264,17 +264,14 @@ async def run_import(
             groups = _groups(
                 await _collect(sources, start, end, report), catalog, start, end, report
             )
-            queue: asyncio.Queue[EventGroup] = asyncio.Queue()
-            for group in groups:
-                queue.put_nowait(group)
+            pending = iter(groups)
             completed = 0
 
             async def worker() -> None:
                 nonlocal completed
                 async with connect_database(settings) as writer:
                     writer_store = EventStore(writer)
-                    while not queue.empty():
-                        group = queue.get_nowait()
+                    for group in pending:
                         primary = max(
                             (
                                 member
@@ -323,7 +320,6 @@ async def run_import(
                                 summary.linked += 1
                             else:
                                 summary.unchanged += 1
-                        queue.task_done()
                         completed += 1
                         if completed % 250 == 0 or completed == len(groups):
                             logger.info("Stored %s/%s unique event groups", completed, len(groups))

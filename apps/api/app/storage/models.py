@@ -129,10 +129,3 @@ class UpsertResult(_FrozenModel):
     source_record_id: UUID
     content_version: int = Field(ge=1)
     changed: bool
-
-
-class StoredEvent(_FrozenModel):
-    id: UUID
-    content: EventContent
-    content_version: int = Field(ge=1)
-    content_hash: str

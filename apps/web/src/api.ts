@@ -7,11 +7,8 @@ export async function checkHealth(signal: AbortSignal): Promise<void> {
   })
   if (!response.ok) throw new Error('The service is unavailable.')
 
-  const payload: unknown = await response.json()
-  if (
-    typeof payload !== 'object' || payload === null ||
-    !('status' in payload) || payload.status !== 'ok'
-  ) {
+  const payload = await response.json()
+  if (payload?.status !== 'ok') {
     throw new Error('The service returned an unexpected response.')
   }
 }

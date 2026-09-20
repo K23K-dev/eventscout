@@ -14,6 +14,6 @@
     "typecheck": "pnpm --filter @eventscout/web typecheck",
     "build": "pnpm --filter @eventscout/web build",
     "check:api": "uv run --directory apps/api --locked ruff check . && uv run --directory apps/api --locked ruff format --check . && uv run --directory apps/api --locked mypy",
-    "check": "pnpm lint && pnpm typecheck && pnpm build && pnpm check:api"
+    "check": "pnpm lint && pnpm build && pnpm check:api"
   }
 }

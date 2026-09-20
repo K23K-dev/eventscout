@@ -54,7 +54,7 @@ export function App() {
             <p className="text-[13px] leading-normal text-muted" role="status" aria-live="polite">
               {health.isFetching || health.isPending ? 'Checking the service…' : health.isError
                 ? 'Cannot connect. Start the local API, then try again.'
-                : health.isSuccess ? 'Connected. The starter app is ready.' : 'Waiting to check the service.'}
+                : 'Connected. The starter app is ready.'}
             </p>
           </div>
           <button
