@@ -4,6 +4,7 @@
   --color-paper: #f5f7fb;
   --color-ink: #162742;
   --color-scout: #214ccb;
+  --color-scout-soft: #eef2ff;
   --color-muted: #52637d;
   --color-line: #d8dfed;
   --font-sans: "Segoe UI", Arial, sans-serif;
@@ -16,7 +17,6 @@
 
 @layer base {
   body {
-    min-width: 320px;
     background-color: var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-sans);
