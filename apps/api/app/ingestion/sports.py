@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 FALCONS_URL = "https://www.atlantafalcons.com/schedule/"
@@ -82,8 +82,7 @@ async def collect_falcons(
                 result.warnings.append("Omitted a game whose kickoff date or time is unannounced")
                 continue
             event = _falcons_event(card)
-            if in_window(event.content, window_start, window_end):
-                result.events.append(event)
+            result.events.append(event)
         except ValueError as exc:
             result.issues.append(ParseIssue(str(card.get("data-gameid")), str(exc)))
     return result

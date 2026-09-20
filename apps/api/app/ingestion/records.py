@@ -32,6 +32,11 @@ class ParsedFeed:
 
 @dataclass
 class SourceCollection:
+    """Fetched observations; the runner admits new events only inside its window.
+
+    Keep already-fetched dates outside the window so known occurrences can move.
+    """
+
     events: list[ParsedEvent]
     records_seen: int
     requests: int

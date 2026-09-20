@@ -16,7 +16,7 @@ from pydantic import HttpUrl
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import node_text as _text
 from app.ingestion.parsing import publisher_url
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 _TIMEZONE = ZoneInfo("America/New_York")
@@ -110,11 +110,13 @@ def _parse(
         ends_at = None
     all_day = False
     start_date = end_date = None
+    calendar_cancelled = False
     if ical is not None:
         events = Calendar.from_ical(ical).walk("VEVENT")
         if len(events) != 1:
             raise ValueError("Expected one occurrence in the event iCalendar export")
         component = events[0]
+        calendar_cancelled = str(component.get("STATUS", "")).upper() == "CANCELLED"
         if component.get("RRULE") is not None:
             raise ValueError("Unexpected recurrence rule in an occurrence export")
         start = component.decoded("DTSTART")
@@ -173,8 +175,15 @@ def _parse(
         None,
     )
     status = _content(event, 'meta[itemprop="eventStatus"]') or ""
-    cancelled = "cancel" in status.casefold() or re.match(
-        r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I
+    cancelled = (
+        calendar_cancelled
+        or status
+        in {
+            "EventCancelled",
+            "https://schema.org/EventCancelled",
+            "http://schema.org/EventCancelled",
+        }
+        or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
     )
     return ParsedEvent(
         external_id=item.external_id,
@@ -275,6 +284,6 @@ async def collect(
     for parsed in await asyncio.gather(*(detail(item) for item in listings.values())):
         if isinstance(parsed, ParseIssue):
             result.issues.append(parsed)
-        elif parsed is not None and in_window(parsed.content, window_start, window_end):
+        elif parsed is not None:
             result.events.append(parsed)
     return result

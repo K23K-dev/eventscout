@@ -13,7 +13,7 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import http_url, issue_message, localize
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 LISTING_URL = "https://library.gatech.edu/events-workshops"
@@ -134,7 +134,7 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
         source_url=HttpUrl(url),
         registration_url=HttpUrl(registration_url) if registration_url else None,
         status="cancelled"
-        if re.match(r"^(?:\[|\()?(?:cancelled|canceled)\b", title, re.I)
+        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
     )
     return ParsedEvent(
@@ -227,7 +227,6 @@ async def collect(
             result.issues.append(ParseIssue(event.external_id, "Repeated Library node ID"))
         else:
             identities.add(event.external_id)
-            if in_window(event.content, window_start, window_end):
-                result.events.append(event)
+            result.events.append(event)
     result.events.sort(key=lambda event: event.external_id)
     return result

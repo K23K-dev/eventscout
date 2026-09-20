@@ -13,7 +13,7 @@ from pydantic import HttpUrl, JsonValue
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import localize, node_text
-from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 CALENDAR_URL = "https://puppet.org/calendar"
@@ -64,7 +64,9 @@ def _performance(card: Tag, feed_url: str) -> ParsedEvent:
             tags=[category],
             source_url=HttpUrl(program),
             registration_url=HttpUrl(booking),
-            status="cancelled" if re.search(r"\bcancel(?:led|ed)\b", title, re.I) else "scheduled",
+            status="cancelled"
+            if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+            else "scheduled",
         ),
         source_updated_at=None,
         raw_payload={
@@ -155,9 +157,5 @@ async def collect(
         current = current.replace(
             year=current.year + (current.month == 12), month=current.month % 12 + 1
         )
-    result.events = [
-        event
-        for _, event in sorted(events.items())
-        if in_window(event.content, window_start, window_end)
-    ]
+    result.events = [event for _, event in sorted(events.items())]
     return result

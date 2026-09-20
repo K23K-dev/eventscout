@@ -374,7 +374,7 @@ def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
         source_url=source_url,
         registration_url=_registration_url(soup, str(source_url), description),
         status="cancelled"
-        if re.match(r"^(?:\[|\()?(?:cancelled|canceled)\b", title, re.I)
+        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
     )
     return ParsedEvent(

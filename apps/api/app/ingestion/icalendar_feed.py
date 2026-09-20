@@ -14,7 +14,7 @@ from pydantic import JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import html_text, http_url, validation_message
-from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 _TIMEZONE = ZoneInfo("America/New_York")
@@ -156,7 +156,7 @@ def _parse_event(
         tags=tags,
         source_url=http_url(link),
         status="cancelled"
-        if status == "CANCELLED" or re.match(r"^(?:\[|\()?(?:cancelled|canceled)\b", title, re.I)
+        if status == "CANCELLED" or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
     )
     return ParsedEvent(
@@ -211,7 +211,6 @@ async def collect(
     events = [
         replace(event, raw_payload={**event.raw_payload, "feed_urls": [url]})
         for event in parsed.events
-        if in_window(event.content, window_start, window_end)
     ]
     if require_metro_venue:
         # The radio calendar also advertises travel to national hamfests. Retain

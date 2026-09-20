@@ -11,7 +11,7 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import localize
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 EASTERN = ZoneInfo("America/New_York")
@@ -60,8 +60,9 @@ def _tree_event(card: Tag, year: int, month: int, feed_url: str) -> ParsedEvent:
         for name in ("education", "volunteer", "community")
         if card.select_one(f".circle.{name}") is not None
     ]
+    title = _text(card, "h3")
     content = EventContent(
-        title=_text(card, "h3"),
+        title=title,
         description=_text(card, "p"),
         starts_at=begins,
         ends_at=finishes,
@@ -70,6 +71,9 @@ def _tree_event(card: Tag, year: int, month: int, feed_url: str) -> ParsedEvent:
         location_kind="online" if venue == "Virtual" else "in_person" if venue else "unknown",
         tags=tags,
         source_url=HttpUrl(url),
+        status="cancelled"
+        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+        else "scheduled",
     )
     return ParsedEvent(
         identity[1],
@@ -106,8 +110,7 @@ async def collect_trees(
                 if "online store closes" in _text(card, "h3").casefold():
                     continue
                 event = _tree_event(card, current.year, current.month, feed_url)
-                if in_window(event.content, window_start, window_end):
-                    result.events.append(event)
+                result.events.append(event)
             except ValueError as exc:
                 result.issues.append(ParseIssue(None, str(exc)))
         current = current.replace(
@@ -140,8 +143,9 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
             str(text).strip() for text in address.find_all(string=True, recursive=False)
         )
         venue = ", ".join(part for part in (label.strip(), venue) if part)
+    title = anchor.get_text(" ", strip=True)
     content = EventContent(
-        title=anchor.get_text(" ", strip=True),
+        title=title,
         description=(
             _text(card, ".eventlist-excerpt") if card.select_one(".eventlist-excerpt") else ""
         ),
@@ -152,6 +156,9 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
         location_kind="in_person" if venue else "unknown",
         tags=["outdoors", "community"],
         source_url=HttpUrl(url),
+        status="cancelled"
+        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+        else "scheduled",
     )
     return ParsedEvent(
         urlsplit(url).path,
@@ -172,8 +179,7 @@ async def collect_south_fork(
     for card in cards:
         try:
             event = _south_fork_event(card)
-            if in_window(event.content, window_start, window_end):
-                result.events.append(event)
+            result.events.append(event)
         except ValueError as exc:
             result.issues.append(ParseIssue(None, str(exc)))
     return result

@@ -15,7 +15,7 @@ from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import html_text, issue_message
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 _LOCAL_ZONE = ZoneInfo("America/New_York")
@@ -185,7 +185,7 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         source_url=source_url,
         registration_url=registration_url,
         status="cancelled"
-        if re.match(r"^(?:\[|\()?(?:cancelled|canceled)\b", title, re.I)
+        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
     )
     raw_payload = {**event, "feed_urls": [base_url]}
@@ -280,12 +280,8 @@ async def collect(
                 continue
             try:
                 event = _parse(item, api_url)
-                corrected_end = "ignored_end_reason" in event.raw_payload
-                corrected_ends += corrected_end
-                # Return corrections even after their true occurrence is past;
-                # the runner refreshes known rows without inserting past ones.
-                if corrected_end or in_window(event.content, window_start, window_end):
-                    result.events.append(event)
+                corrected_ends += "ignored_end_reason" in event.raw_payload
+                result.events.append(event)
             except (ValueError, TypeError) as exc:
                 message = "Invalid event fields" if isinstance(exc, ValidationError) else str(exc)
                 result.issues.append(ParseIssue(identity, message))

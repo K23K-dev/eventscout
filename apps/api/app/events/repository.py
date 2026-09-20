@@ -92,7 +92,10 @@ class EventRepository:
         cursor = await self._connection.execute(
             sql.SQL("""
                 SELECT {}, provenance.last_observed_at, provenance.sources
-                FROM eventscout.event_occurrences e {} WHERE e.id = %(id)s
+                FROM eventscout.event_occurrences e {} WHERE e.id = (
+                    SELECT COALESCE(merged_into, id) FROM eventscout.event_occurrences
+                    WHERE id = %(id)s
+                )
             """).format(_PUBLIC_COLUMNS, _SOURCE_DETAILS),
             {"id": event_id, "enabled_sources": list(self._enabled_sources)},
         )
@@ -106,7 +109,7 @@ class EventRepository:
             "window_end": datetime.combine(filters.end_date, time.min, CATALOG_TIMEZONE),
         }
         clauses: list[sql.Composable] = [
-            sql.SQL("e.status = 'scheduled'"),
+            sql.SQL("e.merged_into IS NULL AND e.status = 'scheduled'"),
             _ENABLED_EVENT,
             sql.SQL("""
                 CASE WHEN e.all_day THEN

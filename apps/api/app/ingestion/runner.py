@@ -34,6 +34,7 @@ class SourceReport:
     updated: int = 0
     unchanged: int = 0
     linked: int = 0
+    merged: int = 0
     issues: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -116,25 +117,37 @@ async def _collect(
 
 async def _catalog(connection: AsyncConnection[dict[str, Any]]) -> list[CatalogRecord]:
     cursor = await connection.execute(
-        """SELECT s.slug, s.publisher, r.external_id, r.event_id, to_jsonb(e) AS content,
+        """SELECT s.slug, s.publisher, r.external_id, r.event_id,
+             r.content AS observed_content, r.source_updated_at, to_jsonb(e) AS canonical_content,
+             count(*) OVER (PARTITION BY r.event_id) AS record_count,
              r.raw_payload -> 'source_url_is_collection' AS source_url_is_collection
            FROM eventscout.source_records r JOIN eventscout.sources s ON s.id = r.source_id
-           JOIN eventscout.event_occurrences e ON e.id = r.event_id"""
+           JOIN eventscout.event_occurrences e ON e.id = r.event_id
+           WHERE e.merged_into IS NULL"""
     )
-    return [
-        CatalogRecord(
-            source=row["slug"],
-            publisher=row["publisher"],
-            external_id=row["external_id"],
-            priority=SOURCES[row["slug"]].priority if row["slug"] in SOURCES else 100,
-            event_id=row["event_id"],
-            content=EventContent.model_validate(
-                {name: row["content"][name] for name in EventContent.model_fields}
-            ),
-            source_url_is_collection=row["source_url_is_collection"] is True,
+    records = []
+    for row in await cursor.fetchall():
+        canonical = EventContent.model_validate(
+            {name: row["canonical_content"][name] for name in EventContent.model_fields}
         )
-        for row in await cursor.fetchall()
-    ]
+        source = SOURCES.get(row["slug"])
+        records.append(
+            CatalogRecord(
+                source=row["slug"],
+                publisher=row["publisher"],
+                external_id=row["external_id"],
+                priority=source.priority if source and source.enabled else 1000,
+                event_id=row["event_id"],
+                canonical_content=canonical,
+                content=EventContent.model_validate(row["observed_content"])
+                if row["observed_content"] is not None
+                else canonical,
+                source_updated_at=row["source_updated_at"],
+                matchable=row["observed_content"] is not None or row["record_count"] == 1,
+                source_url_is_collection=row["source_url_is_collection"] is True,
+            )
+        )
+    return records
 
 
 def _groups(
@@ -144,18 +157,27 @@ def _groups(
     end: datetime,
     report: ImportReport,
 ) -> list[EventGroup]:
-    known = {(row.source, row.external_id) for row in catalog}
-    selected = [
-        observation
-        for observation in observations
-        if in_window(observation.event.content, start, end)
-        or (observation.source, observation.event.external_id) in known
-    ]
+    known = {(row.source, row.external_id): row for row in catalog}
+    summaries = {source.source: source for source in report.sources}
+    selected = []
+    for observation in observations:
+        event = observation.event
+        previous = known.get((observation.source, event.external_id))
+        if (
+            previous is not None
+            and previous.source_updated_at is not None
+            and event.source_updated_at is not None
+            and event.source_updated_at < previous.source_updated_at
+        ):
+            summaries[observation.source].issues.append(
+                f"{event.external_id}: older source revision ignored"
+            )
+        elif previous is not None or in_window(event.content, start, end):
+            selected.append(observation)
     groups = group_events(selected, catalog)
-    accepted = [group for group in groups if not group.conflict]
     upcoming = [
         group
-        for group in accepted
+        for group in groups
         if any(
             member.event.content.status == "scheduled"
             and in_window(member.event.content, start, end)
@@ -164,14 +186,13 @@ def _groups(
     ]
     report.unique_events = len(upcoming)
     report.duplicate_source_records = sum(len(group.observations) - 1 for group in upcoming)
-    summaries = {source.source: source for source in report.sources}
     for group in groups:
         if group.conflict:
             for member in group.observations:
-                summaries[member.source].issues.append(
-                    f"{member.event.external_id}: matches multiple existing events; review required"
-                )
-    return accepted
+                warning = "Ambiguous duplicate evidence; distinct occurrences were kept separate."
+                if warning not in summaries[member.source].warnings:
+                    summaries[member.source].warnings.append(warning)
+    return groups
 
 
 async def catalog_metrics(
@@ -184,7 +205,7 @@ async def catalog_metrics(
              WHERE s.slug = ANY(%(enabled_sources)s)
            ), live AS (
              SELECT id FROM eventscout.event_occurrences e
-             WHERE status = 'scheduled' AND CASE WHEN all_day THEN
+             WHERE merged_into IS NULL AND status = 'scheduled' AND CASE WHEN all_day THEN
                (start_date::timestamp AT TIME ZONE timezone) < %(end)s AND
                (COALESCE(end_date, start_date + 1)::timestamp AT TIME ZONE timezone) > %(start)s
              ELSE starts_at < %(end)s AND COALESCE(ends_at > %(start)s, starts_at >= %(start)s) END
@@ -272,51 +293,44 @@ async def run_import(
                 async with connect_database(settings) as writer:
                     writer_store = EventStore(writer)
                     for group in pending:
-                        primary = max(
-                            (
-                                member
-                                for member in group.observations
-                                if member.source == group.authority
-                            ),
-                            key=lambda member: (
-                                member.event.source_updated_at or datetime.min.replace(tzinfo=UTC),
-                                member.event.external_id,
-                            ),
-                            default=None,
-                        )
+                        primary = group.primary
                         members = sorted(
                             group.observations, key=lambda member: member is not primary
                         )
-                        event_id = group.event_id
-                        for member in members:
-                            summary = summaries[member.source]
-                            event = member.event
-                            try:
-                                result = await writer_store.upsert_event(
+                        try:
+                            results = await writer_store.upsert_group(
+                                [
                                     EventObservation(
                                         source_id=source_ids[member.source],
-                                        external_id=event.external_id,
-                                        content=event.content,
+                                        external_id=member.event.external_id,
+                                        content=member.event.content,
                                         observed_at=observed_at,
-                                        source_updated_at=event.source_updated_at,
-                                        raw_payload=event.raw_payload,
+                                        source_updated_at=member.event.source_updated_at,
+                                        raw_payload=member.event.raw_payload,
                                         run_id=run_ids[member.source],
-                                    ),
-                                    canonical_event_id=event_id,
-                                    update_content=member is primary,
+                                    )
+                                    for member in members
+                                ],
+                                canonical_event_id=group.event_id,
+                                merge_ids=group.merge_ids,
+                                update_content=primary is not None,
+                            )
+                        except StaleObservationError:
+                            for member in members:
+                                summaries[member.source].issues.append(
+                                    f"{member.event.external_id}: newer observation stored; "
+                                    "group unchanged"
                                 )
-                            except StaleObservationError:
-                                summary.issues.append(
-                                    f"{event.external_id}: newer observation already stored"
-                                )
-                                continue
-                            event_id = result.event_id
+                            continue
+                        summaries[members[0].source].merged += len(group.merge_ids)
+                        for member, result in zip(members, results, strict=True):
+                            summary = summaries[member.source]
                             if result.changed:
                                 if result.content_version == 1:
                                     summary.created += 1
                                 else:
                                     summary.updated += 1
-                            elif (member.source, event.external_id) not in identities:
+                            elif (member.source, member.event.external_id) not in identities:
                                 summary.linked += 1
                             else:
                                 summary.unchanged += 1

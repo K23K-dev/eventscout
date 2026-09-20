@@ -15,7 +15,7 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import http_url, issue_message, localize, node_text
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 _ZONE = ZoneInfo("America/New_York")
@@ -138,8 +138,14 @@ def _parse_detail(
                 ends_at = schema_end
         ticket = showing.select_one("a.tickets[href]")
         registration = _url(ticket.get("href"), url) if ticket else None
-        cancelled = re.search(r"\bcancel(?:led|ed)\b", _text(showing), re.I) is not None
-        cancelled = cancelled or schema.get("eventStatus") == "https://schema.org/EventCancelled"
+        cancelled = (
+            schema.get("eventStatus") == "https://schema.org/EventCancelled"
+            or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I) is not None
+            or any(
+                re.fullmatch(r"cancel(?:led|ed)[.!]?", text, re.I)
+                for text in showing.stripped_strings
+            )
+        )
         performer = schema.get("performer")
         sports = isinstance(performer, dict) and performer.get("@type") == "SportsTeam"
         events.append(
@@ -258,8 +264,7 @@ async def collect(
                 result.issues.append(ParseIssue(event.external_id, "Repeated showing ID"))
                 continue
             identities.add(event.external_id)
-            if in_window(event.content, window_start, window_end):
-                result.events.append(event)
+            result.events.append(event)
     result.events.sort(key=lambda event: event.external_id)
     result.warnings = sorted(set(result.warnings))
     return result

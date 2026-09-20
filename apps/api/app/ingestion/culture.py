@@ -14,7 +14,7 @@ from pydantic import HttpUrl
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import http_url, issue_message, localize
 from app.ingestion.parsing import node_text as _text
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 _ZONE = ZoneInfo("America/New_York")
@@ -88,7 +88,7 @@ def _earl_event(card: Tag) -> ParsedEvent:
         source_url=source_url,
         registration_url=registration,
         status="cancelled"
-        if re.search(r"\b(?:cancelled|canceled)\b", title, re.I)
+        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
     )
     return ParsedEvent(
@@ -127,8 +127,7 @@ async def collect_earl(
                     if event.external_id in seen:
                         raise ValueError("Repeated EARL event post ID")
                     seen.add(event.external_id)
-                    if in_window(event.content, window_start, window_end):
-                        result.events.append(event)
+                    result.events.append(event)
                 except (ValueError, TypeError) as exc:
                     result.issues.append(_issue(None, exc))
             next_link = next(
@@ -221,6 +220,9 @@ def _fernbank_event(html: bytes, url: str, card: Tag) -> ParsedEvent:
             tags=["Museum"],
             source_url=HttpUrl(url),
             registration_url=registration,
+            status="cancelled"
+            if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+            else "scheduled",
         ),
         source_updated_at=None,
         raw_payload={
@@ -270,7 +272,7 @@ async def collect_fernbank(
     for event in await asyncio.gather(*(detail(url, card) for url, card in sorted(cards.items()))):
         if isinstance(event, ParseIssue):
             result.issues.append(event)
-        elif in_window(event.content, window_start, window_end):
+        else:
             result.events.append(event)
             if event.raw_payload["invalid_published_end"]:
                 result.warnings.append(

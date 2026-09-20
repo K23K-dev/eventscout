@@ -22,7 +22,7 @@ from app.ingestion.icalendar_feed import (
     calendar_text,
     parse_calendar_events,
 )
-from app.ingestion.records import ParsedEvent, ParsedFeed, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParsedFeed, SourceCollection
 from app.storage.models import EventContent
 
 FEED_URL = "https://calendar.gsu.edu/calendar/1.ics"
@@ -107,7 +107,7 @@ def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
         tags=tags,
         source_url=HttpUrl(url),
         status="cancelled"
-        if status == "CANCELLED" or re.match(r"^(?:\[|\()?(?:cancelled|canceled)\b", title, re.I)
+        if status == "CANCELLED" or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
     )
     raw_tags: list[JsonValue] = list(tags)
@@ -221,11 +221,7 @@ async def collect(
     if parsed.records_seen == 0:
         raise ValueError("Publisher returned an unexpectedly empty subscription feed")
     return SourceCollection(
-        events=[
-            event
-            for event in parsed.events
-            if _discovery_event(event) and in_window(event.content, window_start, window_end)
-        ],
+        events=[event for event in parsed.events if _discovery_event(event)],
         records_seen=parsed.records_seen,
         requests=1,
         issues=parsed.issues,

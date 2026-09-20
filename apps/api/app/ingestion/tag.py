@@ -15,7 +15,7 @@ from pydantic import HttpUrl, JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import publisher_url
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 LISTING_URL = "https://members.tagonline.org/calendar"
@@ -251,6 +251,6 @@ async def collect(
     for parsed in await asyncio.gather(*(detail(item) for item in listings)):
         if isinstance(parsed, ParseIssue):
             result.issues.append(parsed)
-        elif parsed is not None and in_window(parsed.content, window_start, window_end):
+        elif parsed is not None:
             result.events.append(parsed)
     return result

@@ -114,41 +114,105 @@ class EventStore:
         canonical_event_id: UUID | None = None,
         update_content: bool = True,
     ) -> UpsertResult:
-        """Store provenance, optionally linking it to an existing canonical event.
+        """Store one observation using the same atomic path as reconciled groups."""
+        results = await self.upsert_group(
+            [observation],
+            canonical_event_id=canonical_event_id,
+            update_content=update_content,
+        )
+        return results[0]
 
-        Only the chosen source should update canonical content. Other sources can
-        refresh their observations with update_content=False without changing the
-        event's content version or creating an indexing job.
+    async def upsert_group(
+        self,
+        observations: list[EventObservation],
+        *,
+        canonical_event_id: UUID | None = None,
+        merge_ids: tuple[UUID, ...] = (),
+        update_content: bool = True,
+    ) -> list[UpsertResult]:
+        """Save a reconciled group and its aliases in one transaction.
+
+        The first observation supplies canonical content. Every member preserves
+        its own content and freshness; a failed member rolls back the entire group.
+        The caller must establish duplicate evidence before requesting a merge.
         """
         self._require_idle()
-        content_hash = observation.content.content_hash()
-        values = _content_values(observation.content)
-        identity = (
-            observation.source_id,
-            observation.external_id,
-            observation.occurrence_key,
-        )
+        if not observations:
+            raise ValueError("an event group needs at least one observation")
+        identities = [
+            (observation.source_id, observation.external_id, observation.occurrence_key)
+            for observation in observations
+        ]
+        if len(set(identities)) != len(identities):
+            raise ValueError("an event group cannot repeat a source identity")
+        contents = [observation.content.model_dump(mode="json") for observation in observations]
+        content_hash = observations[0].content.content_hash()
+        values = _content_values(observations[0].content)
         async with self._connection.transaction():
-            if observation.run_id is not None:
-                await self._validate_run(observation.run_id, observation.source_id)
-            # Row locks cannot protect a record that has not been created yet.
-            await self._connection.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                (json.dumps([str(value) for value in identity]),),
-            )
+            for run_id, source_id in sorted(
+                {
+                    (observation.run_id, observation.source_id)
+                    for observation in observations
+                    if observation.run_id is not None
+                }
+            ):
+                await self._validate_run(run_id, source_id)
+            # Lock identities even when their source records have not been created yet.
+            for identity in sorted(identities):
+                await self._connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (json.dumps([str(value) for value in identity]),),
+                )
+            records: list[dict[str, Any] | None] = []
+            for identity in identities:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT id, event_id, observed_at, source_updated_at, content
+                    FROM eventscout.source_records
+                    WHERE source_id = %s AND external_id = %s AND occurrence_key = %s
+                    """,
+                    identity,
+                )
+                records.append(await cursor.fetchone())
+            known_ids = {record["event_id"] for record in records if record is not None}
+            if canonical_event_id is None and len(known_ids) == 1:
+                canonical_event_id = next(iter(known_ids))
+            targets = set(merge_ids)
+            if targets and (canonical_event_id is None or canonical_event_id in targets):
+                raise ValueError("a merge needs a separate canonical event")
+            if canonical_event_id is not None:
+                targets.add(canonical_event_id)
+            if known_ids - targets:
+                raise ValueError("source record is already linked to another canonical event")
+            # Event locks also serialize movement of records from other source identities.
             cursor = await self._connection.execute(
                 """
-                SELECT id, event_id, observed_at, source_updated_at
-                FROM eventscout.source_records
-                WHERE source_id = %s AND external_id = %s AND occurrence_key = %s
-                FOR UPDATE
+                SELECT id, content_version, content_hash, merged_into
+                FROM eventscout.event_occurrences
+                WHERE id = ANY(%s) OR merged_into = ANY(%s)
+                ORDER BY id FOR UPDATE
                 """,
-                identity,
+                (list(targets), list(merge_ids)),
             )
-            record = await cursor.fetchone()
-            if record is not None:
-                if canonical_event_id is not None and record["event_id"] != canonical_event_id:
-                    raise ValueError("source record is already linked to another canonical event")
+            locked = {row["id"]: row for row in await cursor.fetchall()}
+            if targets - locked.keys():
+                raise ValueError("canonical event does not exist")
+            if (
+                canonical_event_id is not None
+                and locked[canonical_event_id]["merged_into"] is not None
+            ):
+                raise ValueError("canonical event was already merged; reconcile again")
+            if any(
+                locked[event_id]["merged_into"] not in {None, canonical_event_id}
+                for event_id in merge_ids
+            ):
+                raise ValueError("duplicate event was already merged elsewhere; reconcile again")
+            merge_ids = tuple(
+                event_id for event_id in merge_ids if locked[event_id]["merged_into"] is None
+            )
+            for observation, content, record in zip(observations, contents, records, strict=True):
+                if record is None:
+                    continue
                 if observation.observed_at < record["observed_at"]:
                     raise StaleObservationError(
                         "observation is older than the last successful check"
@@ -159,7 +223,12 @@ class EventStore:
                     and observation.source_updated_at < record["source_updated_at"]
                 ):
                     raise StaleObservationError("observation contains an older source revision")
-                canonical_event_id = record["event_id"]
+                if (
+                    observation.observed_at == record["observed_at"]
+                    and record["content"] is not None
+                    and record["content"] != content
+                ):
+                    raise StaleObservationError("conflicting content at the same observation time")
 
             if canonical_event_id is None:
                 cursor = await self._connection.execute(
@@ -173,21 +242,13 @@ class EventStore:
                 assert event is not None
                 changed = True
             else:
-                cursor = await self._connection.execute(
-                    """
-                    SELECT id, content_version, content_hash FROM eventscout.event_occurrences
-                    WHERE id = %s FOR UPDATE
-                    """,
-                    (canonical_event_id,),
-                )
-                event = await cursor.fetchone()
-                if event is None:
-                    raise ValueError("canonical event does not exist")
+                event = locked[canonical_event_id]
                 changed = update_content and event["content_hash"] != content_hash
                 if (
                     changed
-                    and record is not None
-                    and observation.observed_at == record["observed_at"]
+                    and records[0] is not None
+                    and records[0]["content"] is None
+                    and observations[0].observed_at == records[0]["observed_at"]
                 ):
                     raise StaleObservationError("conflicting content at the same observation time")
                 if changed:
@@ -201,47 +262,64 @@ class EventStore:
                     event = await cursor.fetchone()
                     assert event is not None
 
-            if record is None:
-                cursor = await self._connection.execute(
-                    """
-                    INSERT INTO eventscout.source_records
-                        (event_id, source_id, external_id, occurrence_key, observed_at,
-                         source_updated_at, raw_payload, run_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
-                    """,
-                    (
-                        event["id"],
-                        *identity,
-                        observation.observed_at,
-                        observation.source_updated_at,
-                        Jsonb(observation.raw_payload),
-                        observation.run_id,
-                    ),
-                )
-                record = await cursor.fetchone()
-                assert record is not None
-            else:
+            if merge_ids:
                 await self._connection.execute(
                     """
-                    UPDATE eventscout.source_records
-                    SET observed_at = %s, source_updated_at = COALESCE(%s, source_updated_at),
-                        raw_payload = %s, run_id = %s, updated_at = clock_timestamp()
-                    WHERE id = %s
+                    UPDATE eventscout.source_records SET event_id = %s
+                    WHERE event_id = ANY(%s)
                     """,
-                    (
-                        observation.observed_at,
-                        observation.source_updated_at,
-                        Jsonb(observation.raw_payload),
-                        observation.run_id,
-                        record["id"],
-                    ),
+                    (event["id"], list(merge_ids)),
                 )
-            return UpsertResult(
-                event_id=event["id"],
-                source_record_id=record["id"],
-                content_version=event["content_version"],
-                changed=changed,
-            )
+                await self._connection.execute(
+                    """
+                    UPDATE eventscout.event_occurrences SET merged_into = %s
+                    WHERE id = ANY(%s) OR merged_into = ANY(%s)
+                    """,
+                    (event["id"], list(merge_ids), list(merge_ids)),
+                )
+            results: list[UpsertResult] = []
+            for index, (observation, identity, content, record) in enumerate(
+                zip(observations, identities, contents, records, strict=True)
+            ):
+                metadata = (
+                    observation.observed_at,
+                    observation.source_updated_at,
+                    Jsonb(observation.raw_payload),
+                    observation.run_id,
+                    Jsonb(content),
+                )
+                if record is None:
+                    cursor = await self._connection.execute(
+                        """
+                        INSERT INTO eventscout.source_records
+                            (event_id, source_id, external_id, occurrence_key, observed_at,
+                             source_updated_at, raw_payload, run_id, content)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                        """,
+                        (event["id"], *identity, *metadata),
+                    )
+                    record = await cursor.fetchone()
+                    assert record is not None
+                else:
+                    await self._connection.execute(
+                        """
+                        UPDATE eventscout.source_records
+                        SET observed_at = %s, source_updated_at = COALESCE(%s, source_updated_at),
+                            raw_payload = %s, run_id = %s, content = %s,
+                            updated_at = clock_timestamp()
+                        WHERE id = %s
+                        """,
+                        (*metadata, record["id"]),
+                    )
+                results.append(
+                    UpsertResult(
+                        event_id=event["id"],
+                        source_record_id=record["id"],
+                        content_version=event["content_version"],
+                        changed=changed and index == 0,
+                    )
+                )
+            return results
 
     async def _validate_run(self, run_id: UUID, source_id: UUID) -> None:
         cursor = await self._connection.execute(

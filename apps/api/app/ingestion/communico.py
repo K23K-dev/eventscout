@@ -11,7 +11,7 @@ from pydantic import JsonValue
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.icalendar_feed import parse_feed
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 
 CALENDARS = {
     "dekalb": "https://events.dekalblibrary.org",
@@ -110,9 +110,5 @@ async def collect(
         ParseIssue(identity, "Conflicting versions across branch subscriptions")
         for identity in sorted(conflicts)
     )
-    result.events = [
-        event
-        for identity, event in merged.items()
-        if identity not in conflicts and in_window(event.content, window_start, window_end)
-    ]
+    result.events = [event for identity, event in merged.items() if identity not in conflicts]
     return result

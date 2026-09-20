@@ -16,7 +16,7 @@ from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import localize, node_text
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 LISTING_URL = "https://atlantatechvillage.com/events"
@@ -162,7 +162,7 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
         source_url=HttpUrl(listing.url),
         registration_url=HttpUrl(registration) if registration else None,
         status="cancelled"
-        if re.match(r"^(?:\[|\()?(?:cancelled|canceled)\b", title, re.I)
+        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
         else "scheduled",
     )
     return ParsedEvent(
@@ -228,6 +228,6 @@ async def collect(
     for parsed in await asyncio.gather(*(detail(item) for item in candidates)):
         if isinstance(parsed, ParseIssue):
             result.issues.append(parsed)
-        elif in_window(parsed.content, window_start, window_end):
+        else:
             result.events.append(parsed)
     return result

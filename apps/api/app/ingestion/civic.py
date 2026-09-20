@@ -96,7 +96,10 @@ def _parse(event: Component, base: str, feed_url: str) -> ParsedEvent:
             region="atlanta",
             tags=["Community"],
             source_url=HttpUrl(detail_url),
-            status="cancelled" if re.search(r"\bcancel(?:l)?ed\b", title, re.I) else "scheduled",
+            status="cancelled"
+            if str(event.get("STATUS", "")).upper() == "CANCELLED"
+            or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+            else "scheduled",
         ),
         source_updated_at=updated,
         raw_payload={
@@ -217,6 +220,8 @@ async def collect(
                 continue
             if in_window(event.content, window_start, window_end):
                 candidates.append(event)
+            else:
+                result.events.append(event)
         except (ValueError, TypeError, KeyError) as exc:
             result.issues.append(ParseIssue(identity, str(exc)))
     semaphore = asyncio.Semaphore(2)
