@@ -75,11 +75,16 @@ class EventStore:
         self._require_idle()
         async with self._connection.transaction():
             cursor = await self._connection.execute(
-                "INSERT INTO eventscout.ingestion_runs (source_id) VALUES (%s) RETURNING id",
+                "INSERT INTO eventscout.ingestion_runs (source_id) VALUES (%s) "
+                "RETURNING id, started_at",
                 (source_id,),
             )
             row = await cursor.fetchone()
             assert row is not None
+            await self._connection.execute(
+                "UPDATE eventscout.sources SET last_attempt_at = %s WHERE id = %s",
+                (row["started_at"], source_id),
+            )
             return UUID(str(row["id"]))
 
     async def finish_run(
@@ -89,6 +94,7 @@ class EventStore:
         status: Literal["succeeded", "failed"],
         records_seen: int = 0,
         error: str | None = None,
+        coverage: dict[str, Any] | None = None,
     ) -> None:
         self._require_idle()
         if status not in {"succeeded", "failed"} or records_seen < 0:
@@ -100,12 +106,30 @@ class EventStore:
                 """
                 UPDATE eventscout.ingestion_runs
                 SET status = %s, records_seen = %s, error = %s, finished_at = clock_timestamp()
-                WHERE id = %s AND status = 'running' RETURNING id
+                WHERE id = %s AND status = 'running' RETURNING source_id, started_at, finished_at
                 """,
                 (status, records_seen, error, run_id),
             )
-            if await cursor.fetchone() is None:
+            run = await cursor.fetchone()
+            if run is None:
                 raise InvalidRunError("run is missing or already finished")
+            health = "healthy" if status == "succeeded" else "failed"
+            if coverage and (coverage.get("incomplete") or (error and coverage.get("stored", 0))):
+                health = "partial"
+            await self._connection.execute(
+                """UPDATE eventscout.sources SET health_status = %s,
+                   last_success_at = CASE WHEN %s = 'healthy' THEN %s ELSE last_success_at END,
+                   coverage = COALESCE(%s, coverage)
+                   WHERE id = %s AND last_attempt_at = %s""",
+                (
+                    health,
+                    health,
+                    run["finished_at"],
+                    Jsonb(coverage) if coverage is not None else None,
+                    run["source_id"],
+                    run["started_at"],
+                ),
+            )
 
     async def upsert_event(
         self,
@@ -262,6 +286,12 @@ class EventStore:
                     event = await cursor.fetchone()
                     assert event is not None
 
+            if update_content:
+                await self._connection.execute(
+                    """UPDATE eventscout.event_occurrences
+                       SET last_verified_at = GREATEST(last_verified_at, %s) WHERE id = %s""",
+                    (observations[0].observed_at, event["id"]),
+                )
             if merge_ids:
                 await self._connection.execute(
                     """

@@ -1,11 +1,11 @@
 """The public catalog contract and its validated search parameters."""
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.storage.models import EventContent, SourceInput
 
@@ -67,6 +67,10 @@ class EventFilters(BaseModel):
 
 class EventSource(SourceInput):
     last_observed_at: AwareDatetime
+    last_attempt_at: AwareDatetime | None = None
+    last_success_at: AwareDatetime | None = None
+    health: Literal["healthy", "partial", "failed", "unknown"] = "unknown"
+    coverage_warnings: list[str] = Field(default_factory=list)
 
 
 class EventResponse(EventContent):
@@ -75,7 +79,29 @@ class EventResponse(EventContent):
     last_observed_at: AwareDatetime = Field(
         description="Most recent observation across enabled sources, not an event content change."
     )
+    last_verified_at: AwareDatetime | None = Field(
+        default=None, description="Last verification by the source supplying the event details."
+    )
     sources: list[EventSource]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_stale(self) -> bool:
+        if self.last_verified_at is None:
+            return True
+        now = datetime.now(UTC)
+        start, end = self.starts_at, self.ends_at
+        if self.all_day and self.start_date:
+            zone = ZoneInfo(self.timezone)
+            start = datetime.combine(self.start_date, time.min, zone).astimezone(UTC)
+            end = datetime.combine(
+                self.end_date or self.start_date + timedelta(days=1), time.min, zone
+            ).astimezone(UTC)
+        near = start is not None and (
+            now <= start <= now + timedelta(days=7)
+            or (start <= now and end is not None and end > now)
+        )
+        return now - self.last_verified_at > timedelta(hours=24 if near else 72)
 
 
 class EventPage(BaseModel):

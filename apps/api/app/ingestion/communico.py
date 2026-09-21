@@ -5,12 +5,17 @@ import base64
 import json
 from dataclasses import replace
 from datetime import datetime
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import httpx
+from bs4 import BeautifulSoup
+from icalendar import Event
 from pydantic import JsonValue
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.icalendar_feed import parse_feed
+from app.ingestion.icalendar_feed import _parse_event, parse_feed
+from app.ingestion.parsing import html_text, localize
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 
 CALENDARS = {
@@ -18,6 +23,43 @@ CALENDARS = {
     "gwinnettpl": "https://gwinnettpl.libnet.info",
 }
 _FEED_LIMIT = 500
+
+
+def parse_detail(data: bytes, url: str) -> ParsedEvent:
+    """Use the detail's own Event schema when an occurrence leaves a capped feed."""
+    soup = BeautifulSoup(data, "html.parser")
+    schemas = [
+        item
+        for script in soup.select('script[type="application/ld+json"]')
+        if isinstance(item := json.loads(script.get_text()), dict)
+        and item.get("@type") == "Event"
+        and str(item.get("url", "")).rstrip("/") == url.rstrip("/")
+    ]
+    if len(schemas) != 1:
+        raise ValueError("Missing unambiguous library event details")
+    schema = schemas[0]
+    identity = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
+    if not identity.isdecimal():
+        raise ValueError("Missing stable library event ID")
+    event = Event()
+    event.add("uid", identity)
+    event.add("summary", html_text(schema["name"], decode_entities=True))
+    event.add("description", html_text(schema.get("description", ""), decode_entities=True))
+    for field, property_name in (("startDate", "dtstart"), ("endDate", "dtend")):
+        value = datetime.fromisoformat(schema[field])
+        if value.tzinfo is None:
+            value = localize(value, ZoneInfo("America/New_York"))
+        event.add(property_name, value)
+    location = schema.get("location", {})
+    event.add("location", html_text(location.get("name", ""), decode_entities=True))
+    event.add("url", url)
+    event.add(
+        "status",
+        "CANCELLED"
+        if str(schema.get("eventStatus", "")).endswith("/EventCancelled")
+        else "CONFIRMED",
+    )
+    return _parse_event(event, fallback_url=url, event_base_url=None, midnight_all_day=True)
 
 
 def _feed_params(location_id: str) -> dict[str, str]:
@@ -86,6 +128,7 @@ async def collect(
             if issue not in result.issues:
                 result.issues.append(issue)
         if location_id != "all" and parsed.records_seen >= _FEED_LIMIT:
+            result.coverage_complete = False
             result.warnings.append(
                 f"{name} reached its 500-event export cap; coverage may be partial"
             )

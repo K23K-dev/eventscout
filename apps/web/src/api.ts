@@ -7,6 +7,10 @@ export interface EventSource {
   name: string
   url: string
   last_observed_at: string
+  last_attempt_at: string | null
+  last_success_at: string | null
+  health: 'healthy' | 'partial' | 'failed' | 'unknown'
+  coverage_warnings: string[]
 }
 
 export interface Event {
@@ -31,6 +35,8 @@ export interface Event {
   status: 'scheduled' | 'cancelled'
   content_version: number
   last_observed_at: string
+  last_verified_at: string | null
+  is_stale: boolean
   sources: EventSource[]
 }
 

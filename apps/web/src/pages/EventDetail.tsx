@@ -4,6 +4,13 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 import { ApiError, fetchEvent, type Event } from '../api'
 import { checkedAt, eventDate, eventTime, locationLabels, priceLabels } from '../events'
 
+const sourceHealthLabels = {
+  healthy: 'Latest refresh succeeded',
+  partial: 'Some listings could not be refreshed',
+  failed: 'Latest refresh failed',
+  unknown: 'Refresh status unavailable',
+}
+
 export function EventDetail() {
   const { eventId = '' } = useParams()
   const location = useLocation()
@@ -78,12 +85,21 @@ function EventInformation({ event }: { event: Event }) {
         <h1 className="mt-4 font-display text-4xl leading-[1.08] font-semibold tracking-[-0.035em] break-words sm:text-5xl lg:text-6xl">
           {event.title}
         </h1>
+        <p className="mt-4 text-xs leading-5 text-muted">
+          {event.last_verified_at ? `Checked ${checkedAt(event.last_verified_at)}` : 'These details haven’t been verified yet.'}
+        </p>
       </header>
 
       {(cancelled || ended || started) && (
         <p className={`mt-7 rounded-xl border px-5 py-4 text-sm leading-6 ${cancelled ? 'border-red-200 bg-red-50 text-red-900' : 'border-line bg-white text-muted'}`}>
           <strong className="font-semibold">{cancelled ? 'This event is cancelled.' : ended ? 'This event has ended.' : 'This event has already started.'}</strong>
           {' '}{cancelled ? 'Check the organizer’s page for updates.' : 'Check the original listing for the latest information.'}
+        </p>
+      )}
+
+      {event.is_stale && (
+        <p className="mt-7 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-900">
+          <strong className="font-semibold">Needs a refresh.</strong> Check the organizer’s listing for the latest details.
         </p>
       )}
 
@@ -153,13 +169,25 @@ function EventInformation({ event }: { event: Event }) {
                     {source.name} <span aria-hidden="true">↗</span>
                   </a>
                   <p className="mt-1 text-xs leading-5 text-muted">
-                    {source.publisher} · Last checked {checkedAt(source.last_observed_at)}
+                    {source.publisher} · Listing last seen {checkedAt(source.last_observed_at)}
                   </p>
+                  <details className="mt-1 text-xs leading-5 text-muted">
+                    <summary className={`cursor-pointer ${['partial', 'failed'].includes(source.health) ? 'text-amber-900' : ''}`}>
+                      {sourceHealthLabels[source.health]}
+                    </summary>
+                    {source.last_attempt_at && <p className="mt-1">Last attempted {checkedAt(source.last_attempt_at)}</p>}
+                    {source.last_success_at && <p>Last successful refresh {checkedAt(source.last_success_at)}</p>}
+                    {source.coverage_warnings.length > 0 && (
+                      <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {source.coverage_warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                      </ul>
+                    )}
+                  </details>
                 </li>
               ))}
             </ul>
             <p className="mt-5 text-xs leading-5 text-muted">
-              Last checked means we retrieved this listing, not that the organizer recently updated it.
+              Checked means we verified the listing supplying these details. A source refresh may cover other listings, and doesn’t mean the organizer updated this event.
             </p>
           </section>
         </div>

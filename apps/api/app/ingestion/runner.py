@@ -4,6 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any
 from uuid import UUID
 
@@ -12,8 +13,11 @@ from psycopg import AsyncConnection
 from pydantic import JsonValue
 
 from app.database import connect_database
+from app.ingestion.freshness import load_caches, omitted_events, save_caches
+from app.ingestion.http import ResponseCache, use_cache
 from app.ingestion.matching import CatalogRecord, EventGroup, Observation, group_events
-from app.ingestion.records import ParsedEvent, in_window
+from app.ingestion.recheck import recheck_event
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.ingestion.sources import SOURCES, CalendarSource
 from app.settings import Settings
 from app.storage.models import EventContent, EventObservation
@@ -28,6 +32,7 @@ class SourceReport:
     publisher: str
     run_id: str | None = None
     requests: int = 0
+    not_modified: int = 0
     records_seen: int = 0
     eligible_records: int = 0
     created: int = 0
@@ -35,6 +40,11 @@ class SourceReport:
     unchanged: int = 0
     linked: int = 0
     merged: int = 0
+    recheck_attempts: int = 0
+    rechecked: int = 0
+    unconfirmed: int = 0
+    recheck_deferred: int = 0
+    coverage_complete: bool = True
     issues: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -55,17 +65,37 @@ class ImportReport:
         return any(source.issues for source in self.sources)
 
 
-async def _collect(
-    sources: list[CalendarSource], start: datetime, end: datetime, report: ImportReport
-) -> list[Observation]:
-    async with httpx.AsyncClient(
+def _client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
         headers={"User-Agent": "EventScout/0.1 (public calendar event discovery)"},
         timeout=httpx.Timeout(25),
         follow_redirects=True,
         transport=httpx.AsyncHTTPTransport(retries=2, limits=httpx.Limits(max_connections=8)),
-    ) as client:
+    )
+
+
+async def _collect(
+    sources: list[CalendarSource],
+    start: datetime,
+    end: datetime,
+    report: ImportReport,
+    *,
+    connection: AsyncConnection[dict[str, Any]] | None = None,
+    source_ids: dict[str, UUID] | None = None,
+) -> list[Observation]:
+    caches = (
+        await load_caches(connection, source_ids)
+        if connection is not None and source_ids is not None
+        else {source.config.slug: ResponseCache() for source in sources}
+    )
+    async with _client() as client:
+
+        async def collect_source(source: CalendarSource) -> SourceCollection:
+            with use_cache(caches[source.config.slug]):
+                return await source.collect(client, window_start=start, window_end=end)
+
         collections = await asyncio.gather(
-            *(source.collect(client, window_start=start, window_end=end) for source in sources),
+            *(collect_source(source) for source in sources),
             return_exceptions=True,
         )
     observations: list[Observation] = []
@@ -74,6 +104,7 @@ async def _collect(
             summary.issues.append(f"Collection failed ({type(collection).__name__})")
             continue
         summary.requests = collection.requests
+        summary.coverage_complete = collection.coverage_complete
         summary.records_seen = collection.records_seen
         summary.issues.extend(
             f"{issue.external_id or 'feed'}: {issue.message}" for issue in collection.issues
@@ -112,6 +143,53 @@ async def _collect(
             Observation(source.config.slug, source.config.publisher, source.priority, event)
             for event in events
         )
+    if connection is not None and source_ids is not None:
+        seen = {(item.source, item.event.external_id) for item in observations}
+        candidates, deferred = await omitted_events(connection, source_ids, seen, start)
+        await connection.execute(
+            "UPDATE eventscout.source_records SET last_recheck_at = %s WHERE id = ANY(%s)",
+            (start, [item.record_id for item in candidates]),
+        )
+        semaphore = asyncio.Semaphore(4)
+        async with _client() as client:
+
+            async def recheck_source(source: CalendarSource, summary: SourceReport) -> None:
+                slug = source.config.slug
+                items = [item for item in candidates if item.source == slug]
+                options = source.collect.keywords if isinstance(source.collect, partial) else {}
+                with use_cache(caches[slug]):
+                    for index, item in enumerate(items):
+                        if index:
+                            await asyncio.sleep(options.get("crawl_delay", 1))
+                        summary.recheck_attempts += 1
+                        async with semaphore:
+                            result = await recheck_event(client, source, item.event, now=start)
+                        if isinstance(result, ParseIssue):
+                            summary.unconfirmed += 1
+                            logger.info("%s: %s: %s", slug, result.external_id, result.message)
+                        else:
+                            summary.rechecked += 1
+                            observations.append(
+                                Observation(slug, source.config.publisher, source.priority, result)
+                            )
+                summary.recheck_deferred = deferred.get(slug, 0)
+                if summary.unconfirmed or summary.recheck_deferred:
+                    summary.coverage_complete = False
+                    summary.warnings.append(
+                        f"{summary.unconfirmed + summary.recheck_deferred} previously listed "
+                        "upcoming events still need confirmation from their organizers."
+                    )
+
+            await asyncio.gather(
+                *(
+                    recheck_source(source, summary)
+                    for source, summary in zip(sources, report.sources, strict=True)
+                )
+            )
+        await save_caches(connection, source_ids, caches)
+    for summary in report.sources:
+        summary.requests = caches[summary.source].requests
+        summary.not_modified = caches[summary.source].not_modified
     return observations
 
 
@@ -281,10 +359,11 @@ async def run_import(
                 source_ids[source.config.slug] = saved.id
                 run_ids[source.config.slug] = await store.start_run(saved.id)
                 summaries[source.config.slug].run_id = str(run_ids[source.config.slug])
-            observed_at = datetime.now(UTC)
-            groups = _groups(
-                await _collect(sources, start, end, report), catalog, start, end, report
+            observations = await _collect(
+                sources, start, end, report, connection=connection, source_ids=source_ids
             )
+            observed_at = datetime.now(UTC)
+            groups = _groups(observations, catalog, start, end, report)
             pending = iter(groups)
             completed = 0
 
@@ -358,6 +437,24 @@ async def run_import(
                 status="failed" if summary.issues else "succeeded",
                 records_seen=summary.records_seen,
                 error="\n".join(summary.issues)[:4000] if summary.issues else None,
+                coverage={
+                    "window_start": report.window_start,
+                    "window_end": report.window_end,
+                    "requests": summary.requests,
+                    "not_modified": summary.not_modified,
+                    "records_seen": summary.records_seen,
+                    "eligible_records": summary.eligible_records,
+                    "stored": summary.created
+                    + summary.updated
+                    + summary.linked
+                    + summary.unchanged,
+                    "recheck_attempts": summary.recheck_attempts,
+                    "rechecked": summary.rechecked,
+                    "unconfirmed": summary.unconfirmed,
+                    "recheck_deferred": summary.recheck_deferred,
+                    "incomplete": not summary.coverage_complete,
+                    "warnings": summary.warnings,
+                },
             )
         report.catalog = await catalog_metrics(connection, start, end)
     return report

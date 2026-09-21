@@ -42,7 +42,13 @@ export function EventCard({ event, search }: { event: Event; search: string }) {
       </div>
       <div className="mt-5 flex items-center justify-between gap-2 border-t border-line/70 pt-4 text-[11px] text-muted">
         <span>{event.region === 'gt' ? 'Georgia Tech' : 'Atlanta area'}</span>
-        <span title={checkedAt(event.last_observed_at)}>Checked {formatDate(event.last_observed_at)}</span>
+        {event.is_stale ? (
+          <span className="rounded-full bg-amber-50 px-2 py-1 font-medium text-amber-900" title={event.last_verified_at ? `Last verified ${checkedAt(event.last_verified_at)}` : 'These details haven’t been verified yet.'}>
+            Needs a refresh
+          </span>
+        ) : event.last_verified_at ? (
+          <span title={checkedAt(event.last_verified_at)}>Checked {formatDate(event.last_verified_at)}</span>
+        ) : null}
       </div>
     </article>
   )

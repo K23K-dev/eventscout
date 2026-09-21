@@ -42,6 +42,7 @@ class SourceCollection:
     requests: int
     issues: list[ParseIssue]
     warnings: list[str] = field(default_factory=list)
+    coverage_complete: bool = True
 
 
 def in_window(content: EventContent, start: datetime, end: datetime) -> bool:

@@ -1,11 +1,12 @@
 """Parse Georgia Tech's RSS records without guessing missing event details."""
 
 import asyncio
+import json
 import re
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from html import unescape
+from html import escape, unescape
 from typing import Literal
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
@@ -79,6 +80,7 @@ async def collect(
         url = f"https://calendar.gatech.edu/taxonomy/term/{term}/feed"
         if isinstance(response, Exception):
             if name == "student":
+                result.coverage_complete = False
                 result.warnings.append(
                     "Student-sponsored feed is unavailable; coverage of that category is partial"
                 )
@@ -93,6 +95,7 @@ async def collect(
                 raise ValueError("unexpectedly empty feed")
         except ValueError as exc:
             if name == "student":
+                result.coverage_complete = False
                 result.warnings.append(
                     "Student-sponsored feed is unavailable; coverage of that category is partial"
                 )
@@ -427,3 +430,68 @@ def parse_feed(xml: bytes) -> ParsedFeed:
             continue
         result.events.append(parsed)
     return result
+
+
+def parse_detail(data: bytes, previous: ParsedEvent) -> ParsedEvent:
+    """Read the Mercury record linked by the original Campus Calendar RSS item."""
+    mercury_id = previous.raw_payload.get("mercury_id")
+    if not isinstance(mercury_id, str) or not mercury_id.isdigit():
+        raise ValueError("Missing stable Mercury ID")
+    document = json.loads(data).get(mercury_id, {})
+    record = document.get("#data", {})
+    if document.get("#nid") != mercury_id or record.get("type") != "event":
+        raise ValueError("Mercury detail did not identify the expected event")
+    times = record["field_event_time"]
+    if not times.get("event_time_start"):
+        raise ValueError("Mercury detail is missing the event start")
+    if times.get("rrule") or previous.content.all_day:
+        raise ValueError("Mercury detail cannot confirm this recurring or all-day occurrence")
+    body = "".join(part["value"] for part in record.get("body", []))
+    if not _text(body):
+        body = "".join(part["value"] for part in record.get("field_summary", []))
+    sections = ["<span></span>" * 3, body, "\nEvent time\n"]
+    for key in ("event_time_start", "event_time_end"):
+        if value := times.get(key):
+            sections.append(f'<time datetime="{escape(value, quote=True)}"></time>')
+    sections.extend(
+        [
+            "\nLocation\n",
+            escape(record.get("location", "")),
+            "\nExtras\n",
+            *(
+                f'<a href="{escape(link["url"], quote=True)}">{escape(link["title"])}</a>'
+                for link in record.get("related_links", [])
+            ),
+        ]
+    )
+    for field, path in (
+        ("event_categories", "/event/listings/"),
+        ("keywords", "/event/listings/"),
+        ("invited_audience", "/event/invited-audience/"),
+    ):
+        sections.extend(
+            f'<a href="https://calendar.gatech.edu{path}{escape(tag["id"], quote=True)}">'
+            f"{escape(tag['name'])}</a>"
+            for tag in record.get(field, [])
+        )
+    # Mercury's export omits the RSS Fee field; price stays unknown unless the
+    # current tags or description establish it through the regular RSS parser.
+    updated_at = _aware_time(record["changed_gmt"].replace(" ", "T") + "Z")
+    sections.extend(
+        [
+            f"\nMercury ID\n{mercury_id}\nSource updated\n",
+            f'<time datetime="{updated_at.isoformat()}"></time>',
+        ]
+    )
+    item = ElementTree.Element("item")
+    for key, value in (
+        ("title", record["title"]),
+        ("link", str(previous.content.source_url)),
+        ("description", "".join(sections)),
+    ):
+        ElementTree.SubElement(item, key).text = value
+    parsed = _parse_item(item, previous.external_id)
+    return replace(
+        parsed,
+        raw_payload={**parsed.raw_payload, "mercury_detail": document},
+    )

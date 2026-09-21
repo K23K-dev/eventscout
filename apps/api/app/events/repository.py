@@ -10,14 +10,18 @@ from app.events.models import CATALOG_TIMEZONE, EventFilters, EventPage, EventRe
 from app.storage.models import EventContent
 
 _PUBLIC_COLUMNS = sql.SQL(", ").join(
-    sql.Identifier("e", name) for name in ("id", "content_version", *EventContent.model_fields)
+    sql.Identifier("e", name)
+    for name in ("id", "content_version", "last_verified_at", *EventContent.model_fields)
 )
 _SOURCE_DETAILS = sql.SQL("""
     JOIN LATERAL (
         SELECT max(r.observed_at) AS last_observed_at,
                jsonb_agg(jsonb_build_object(
                    'slug', s.slug, 'publisher', s.publisher, 'name', s.name,
-                   'url', s.url, 'last_observed_at', r.observed_at
+                   'url', s.url, 'last_observed_at', r.observed_at,
+                   'last_attempt_at', s.last_attempt_at, 'last_success_at', s.last_success_at,
+                   'health', s.health_status,
+                   'coverage_warnings', COALESCE(s.coverage->'warnings', '[]'::jsonb)
                ) ORDER BY s.slug) AS sources
         FROM (
             SELECT source_id, max(observed_at) AS observed_at
