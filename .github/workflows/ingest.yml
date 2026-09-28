@@ -35,16 +35,28 @@ jobs:
         run: uv run --locked --no-dev python -m app.ingestion | tee report.json
         env:
           EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
+      - name: Index events
+        if: ${{ !cancelled() }}
+        run: uv run --locked --no-dev python -m app.indexing | tee index.json
+        env:
+          EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
+          EVENTSCOUT_OPENAI_API_KEY: ${{ secrets.EVENTSCOUT_OPENAI_API_KEY }}
+          EVENTSCOUT_PINECONE_API_KEY: ${{ secrets.EVENTSCOUT_PINECONE_API_KEY }}
       - name: Summarize
         if: always()
         run: |
-          [ -s report.json ] || exit 0
           {
-            jq -r '"**\(.catalog.upcoming_unique_events // "?") upcoming events** from \(.catalog.calendars // "?") calendars"' report.json
-            echo
-            echo '| Source | Seen | Created | Updated | Unchanged | Not modified | Issues |'
-            echo '| --- | ---: | ---: | ---: | ---: | ---: | ---: |'
-            jq -r '.sources[] | "| \(.source) | \(.records_seen) | \(.created) | \(.updated) | \(.unchanged) | \(.not_modified) | \(.issues | length) |"' report.json
-            echo
-            jq -r '.sources[] | select(.records_seen == 0) | "- **\(.source)** returned no records: \(.issues[0] // "no issue reported")"' report.json
+            if [ -s report.json ]; then
+              jq -r '"**\(.catalog.upcoming_unique_events // "?") upcoming events** from \(.catalog.calendars // "?") calendars"' report.json
+              echo
+              echo '| Source | Seen | Created | Updated | Unchanged | Not modified | Issues |'
+              echo '| --- | ---: | ---: | ---: | ---: | ---: | ---: |'
+              jq -r '.sources[] | "| \(.source) | \(.records_seen) | \(.created) | \(.updated) | \(.unchanged) | \(.not_modified) | \(.issues | length) |"' report.json
+              echo
+              jq -r '.sources[] | select(.records_seen == 0) | "- **\(.source)** returned no records: \(.issues[0] // "no issue reported")"' report.json
+            fi
+            if [ -s index.json ]; then
+              echo
+              jq -r '"**Search index:** \(.embedded) embedded, \(.removed + .expired + .pruned) removed, \(.errors | length) errors"' index.json
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

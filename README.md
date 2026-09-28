@@ -13,7 +13,7 @@ pnpm install --frozen-lockfile
 uv sync --directory apps/api --locked
 ```
 
-For ingestion, create `apps/api/.env` from `.env.example` if missing and set `EVENTSCOUT_DATABASE_URL` to the hosted Supabase session-pooler connection string. The database schema is managed in Supabase. A GitHub Actions workflow imports events every six hours using the same connection string, stored as the `EVENTSCOUT_DATABASE_URL` repository secret.
+For ingestion, create `apps/api/.env` from `.env.example` if missing and set `EVENTSCOUT_DATABASE_URL` to the hosted Supabase session-pooler connection string. The database schema is managed in Supabase. A GitHub Actions workflow imports and indexes events every six hours; it reads `EVENTSCOUT_DATABASE_URL`, `EVENTSCOUT_OPENAI_API_KEY`, and `EVENTSCOUT_PINECONE_API_KEY` from repository secrets.
 
 Run in separate terminals:
 
@@ -30,4 +30,5 @@ Web: <http://localhost:5173> · API docs: <http://127.0.0.1:8000/docs>
 | --- | --- |
 | `pnpm ingest --dry-run` | Preview the next 90 days of events |
 | `pnpm ingest` | Import events into Supabase |
+| `pnpm index` | Embed new or changed events into Pinecone |
 | `pnpm check` | Run lint, formatting, type checks, and the web build |
