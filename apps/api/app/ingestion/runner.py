@@ -62,7 +62,8 @@ class ImportReport:
 
     @property
     def failed(self) -> bool:
-        return any(source.issues for source in self.sources)
+        """Fail when a calendar could not be read at all; listing-level issues are routine."""
+        return any(source.records_seen == 0 and source.issues for source in self.sources)
 
 
 def _client() -> httpx.AsyncClient:

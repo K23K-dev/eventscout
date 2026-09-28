@@ -1,0 +1,50 @@
+name: Refresh events
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-events
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    name: Import events
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.17'
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+      - name: Import events
+        run: uv run --locked --no-dev python -m app.ingestion | tee report.json
+        env:
+          EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
+      - name: Summarize
+        if: always()
+        run: |
+          [ -s report.json ] || exit 0
+          {
+            jq -r '"**\(.catalog.upcoming_unique_events // "?") upcoming events** from \(.catalog.calendars // "?") calendars"' report.json
+            echo
+            echo '| Source | Seen | Created | Updated | Unchanged | Not modified | Issues |'
+            echo '| --- | ---: | ---: | ---: | ---: | ---: | ---: |'
+            jq -r '.sources[] | "| \(.source) | \(.records_seen) | \(.created) | \(.updated) | \(.unchanged) | \(.not_modified) | \(.issues | length) |"' report.json
+            echo
+            jq -r '.sources[] | select(.records_seen == 0) | "- **\(.source)** returned no records: \(.issues[0] // "no issue reported")"' report.json
+          } >> "$GITHUB_STEP_SUMMARY"

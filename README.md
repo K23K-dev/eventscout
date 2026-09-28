@@ -2,7 +2,7 @@
 
 Event discovery for Georgia Tech and Atlanta, built with React, TypeScript, FastAPI, and Supabase.
 
-In development. Event ingestion and keyword search are implemented; the browsing UI and AI search are next.
+In development. Event ingestion, keyword search, and the browsing UI are implemented; AI search is next.
 
 ## Development
 
@@ -13,7 +13,7 @@ pnpm install --frozen-lockfile
 uv sync --directory apps/api --locked
 ```
 
-For ingestion, create `apps/api/.env` from `.env.example` if missing and set `EVENTSCOUT_DATABASE_URL` to the hosted Supabase session-pooler connection string. The database schema is managed in Supabase.
+For ingestion, create `apps/api/.env` from `.env.example` if missing and set `EVENTSCOUT_DATABASE_URL` to the hosted Supabase session-pooler connection string. The database schema is managed in Supabase. A GitHub Actions workflow imports events every six hours using the same connection string, stored as the `EVENTSCOUT_DATABASE_URL` repository secret.
 
 Run in separate terminals:
 
