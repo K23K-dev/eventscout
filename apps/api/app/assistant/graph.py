@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 CANDIDATES = 8
 MAX_CARDS = 5
+MAX_ALTERNATIVES = 2
 INSTRUCTIONS = """\
 You recommend events around Georgia Tech and Atlanta, choosing only from numbered candidates.
 Today is {today} in America/New_York.
@@ -40,9 +41,9 @@ Reply in 2-4 friendly sentences that answer the person's message:
   cite each one right after mentioning it as [n], using its candidate number.
 - State only facts given for an event. When a price, time, or who can attend is not listed,
   say to check the listing instead of guessing.
-- If few or none match, say so plainly. You may then offer up to two alternatives that share
-  the same main activity, such as other yoga classes for paddleboard yoga, labeled as
-  alternatives. Otherwise cite nothing more.
+- If none match, say so plainly and set matched to false. You may then offer at most two
+  alternatives that share the same main activity, such as other yoga classes for paddleboard
+  yoga, labeled as alternatives. Otherwise cite nothing more.
 - If nothing matches or could stand in, and a broader description could find something, put
   it in search_again, such as "outdoor fitness classes" for "sunrise paddleboard yoga". It must
   be broader than the current search, never a restatement, and must not widen the dates,
@@ -55,6 +56,7 @@ Reply in 2-4 friendly sentences that answer the person's message:
 
 class Draft(BaseModel):
     reply: str = Field(description="The answer, citing candidates inline as [n]")
+    matched: bool = Field(description="Whether any cited candidate matches what they asked for")
     search_again: str | None = Field(description="A broader description, only if none fit")
 
 
@@ -204,6 +206,12 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
         broader = (draft.search_again or "").strip()
         if not order and broader and broader.casefold() not in asked and not state.get("broader"):
             return {"broader": broader, "attempts": 0, "problem": None}
+        if not draft.matched and len(order) > MAX_ALTERNATIVES:
+            if state.get("attempts", 0) < 2:
+                return {
+                    "problem": f"Nothing matched: offer at most {MAX_ALTERNATIVES} alternatives."
+                }
+            order = order[:MAX_ALTERNATIVES]
         positions = {old: new for new, old in enumerate(order, start=1)}
         reply = re.sub(
             r"\s*\[(\d+)\]",

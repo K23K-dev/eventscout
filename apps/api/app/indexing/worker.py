@@ -1,6 +1,7 @@
 """Keep the Pinecone index in step with the catalog by draining its job queue."""
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
@@ -22,7 +23,9 @@ NAMESPACE = "events"
 _BATCH_SIZE = 50
 _MAX_ATTEMPTS = 5
 _DESCRIPTION_LIMIT = 6000
-_CONTENT_COLUMNS = sql.SQL(", ").join(sql.Identifier(name) for name in EventContent.model_fields)
+_CONTENT_COLUMNS = sql.SQL(", ").join(
+    sql.Identifier("e", name) for name in EventContent.model_fields
+)
 
 
 @dataclass
@@ -38,9 +41,15 @@ class IndexReport:
     errors: list[str] = field(default_factory=list)
 
 
-def embedding_text(content: EventContent) -> str:
+def embedding_text(
+    content: EventContent, summary: str | None = None, topics: Sequence[str] = ()
+) -> str:
     """Describe what an event is about; dates, prices, and formats are filtered instead."""
     lines = [content.title]
+    if summary:
+        lines.append(f"Summary: {summary}")
+    if topics:
+        lines.append(f"Kind: {', '.join(topics)}")
     if content.venue:
         lines.append(f"Venue: {content.venue}")
     if content.tags:
@@ -81,6 +90,23 @@ def vector_metadata(content: EventContent, bounds: tuple[datetime, datetime]) ->
     return metadata
 
 
+async def requeue(
+    connection: AsyncConnection[dict[str, Any]], content_hashes: list[str] | None = None
+) -> int:
+    """Queue events' current versions again, all or those with the given content hashes."""
+    cursor = await connection.execute(
+        """UPDATE eventscout.index_jobs j SET
+               status = 'pending', attempts = 0, available_at = clock_timestamp(),
+               locked_at = NULL, finished_at = NULL, last_error = NULL
+           FROM eventscout.event_occurrences e
+           WHERE j.event_id = e.id AND j.content_version = e.content_version
+             AND j.status IN ('succeeded', 'failed')
+             AND (%(hashes)s::text[] IS NULL OR e.content_hash = ANY(%(hashes)s::text[]))""",
+        {"hashes": content_hashes},
+    )
+    return cursor.rowcount
+
+
 async def run_indexing(
     settings: Settings, *, limit: int | None = None, reindex: bool = False
 ) -> IndexReport:
@@ -105,17 +131,7 @@ async def run_indexing(
                     }
                 },
             )
-        requeued = 0
-        if reindex:
-            cursor = await connection.execute(
-                """UPDATE eventscout.index_jobs j SET
-                       status = 'pending', attempts = 0, available_at = clock_timestamp(),
-                       locked_at = NULL, finished_at = NULL, last_error = NULL
-                   FROM eventscout.event_occurrences e
-                   WHERE j.event_id = e.id AND j.content_version = e.content_version
-                     AND j.status IN ('succeeded', 'failed')"""
-            )
-            requeued = cursor.rowcount
+        requeued = await requeue(connection) if reindex else 0
         async with await pinecone.index(settings.pinecone_index) as index:
             report = await _drain(connection, openai, index, limit)
             report.requeued = requeued
@@ -179,14 +195,17 @@ async def _apply(
 ) -> None:
     cursor = await connection.execute(
         sql.SQL(
-            "SELECT id, content_version, merged_into, {} "
-            "FROM eventscout.event_occurrences WHERE id = ANY(%s)"
+            "SELECT e.id, e.content_version, e.merged_into, {}, x.summary, x.topics "
+            "FROM eventscout.event_occurrences e LEFT JOIN LATERAL ("
+            "  SELECT summary, topics FROM eventscout.event_enrichments"
+            "  WHERE content_hash = e.content_hash ORDER BY prompt_version DESC LIMIT 1"
+            ") x ON true WHERE e.id = ANY(%s)"
         ).format(_CONTENT_COLUMNS),
         ([job["event_id"] for job in jobs],),
     )
     events = {row["id"]: row for row in await cursor.fetchall()}
     now = datetime.now(UTC)
-    upserts: list[tuple[UUID, EventContent, tuple[datetime, datetime]]] = []
+    upserts: list[tuple[UUID, EventContent, tuple[datetime, datetime], str]] = []
     removed: list[str] = []
     expired: list[str] = []
     superseded = 0
@@ -208,10 +227,11 @@ async def _apply(
         elif bounds is None or bounds[1] <= now:
             expired.append(str(event["id"]))
         else:
-            upserts.append((event["id"], content, bounds))
+            text = embedding_text(content, event["summary"], event["topics"] or ())
+            upserts.append((event["id"], content, bounds, text))
     if upserts:
         response = await openai.embeddings.create(
-            model=EMBEDDING_MODEL, input=[embedding_text(content) for _, content, _ in upserts]
+            model=EMBEDDING_MODEL, input=[text for *_, text in upserts]
         )
         vectors = sorted(response.data, key=lambda item: item.index)
         await index.documents.upsert(
@@ -219,7 +239,7 @@ async def _apply(
             documents=[
                 {"_id": str(event_id), "embedding": vector.embedding}
                 | vector_metadata(content, bounds)
-                for (event_id, content, bounds), vector in zip(upserts, vectors, strict=True)
+                for (event_id, content, bounds, _), vector in zip(upserts, vectors, strict=True)
             ],
         )
         report.tokens += response.usage.total_tokens

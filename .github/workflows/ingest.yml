@@ -35,6 +35,12 @@ jobs:
         run: uv run --locked --no-dev python -m app.ingestion | tee report.json
         env:
           EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
+      - name: Enrich events
+        if: ${{ !cancelled() }}
+        run: uv run --locked --no-dev python -m app.enrichment | tee enrich.json
+        env:
+          EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
+          EVENTSCOUT_OPENAI_API_KEY: ${{ secrets.EVENTSCOUT_OPENAI_API_KEY }}
       - name: Index events
         if: ${{ !cancelled() }}
         run: uv run --locked --no-dev python -m app.indexing | tee index.json
@@ -54,6 +60,10 @@ jobs:
               jq -r '.sources[] | "| \(.source) | \(.records_seen) | \(.created) | \(.updated) | \(.unchanged) | \(.not_modified) | \(.issues | length) |"' report.json
               echo
               jq -r '.sources[] | select(.records_seen == 0) | "- **\(.source)** returned no records: \(.issues[0] // "no issue reported")"' report.json
+            fi
+            if [ -s enrich.json ]; then
+              echo
+              jq -r '"**Enrichment:** \(.enriched) new summaries, \(.rejected) rejected, \(.errors | length) errors"' enrich.json
             fi
             if [ -s index.json ]; then
               echo
