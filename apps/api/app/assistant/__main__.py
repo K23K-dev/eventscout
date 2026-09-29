@@ -3,39 +3,34 @@
 import argparse
 import asyncio
 import io
+import re
 import sys
+import textwrap
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from langgraph.graph.state import CompiledStateGraph
 from openai import AsyncOpenAI
-from pinecone import AsyncIndex, AsyncPinecone
-from psycopg import AsyncConnection
+from pinecone import AsyncPinecone
 
-from app.assistant.intent import (
-    DateRequest,
-    SearchIntent,
-    SearchState,
-    apply_intent,
-    parse_intent,
-    resolve_dates,
-)
+from app.assistant.graph import Services, Turn, TurnResult, answer, build_graph
+from app.assistant.intent import DateRequest, SearchState, resolve_dates
 from app.database import connect_database
 from app.events.models import CATALOG_TIMEZONE, EventResponse
 from app.events.repository import EventRepository
 from app.ingestion.sources import SOURCES
-from app.search.retrieval import search_events
 from app.settings import Settings
 
-# Saved conversations. Each message lists what the merged search should hold afterwards;
-# dates are a relative kind, "next_days:N", or an inclusive "MM-DD..MM-DD" range.
+# Saved conversations. Each message lists what should hold afterwards; dates are a relative
+# kind, "next_days:N", or an inclusive "MM-DD..MM-DD" range.
 SCRIPTS: list[list[tuple[str, dict[str, Any]]]] = [
     [
-        ("any jazz this weekend?", {"dates": "this_weekend"}),
+        ("any jazz this weekend?", {"dates": "this_weekend", "answered": True}),
         ("only free ones", {"price_status": "free", "dates": "this_weekend", "same_topic": True}),
         ("what about next month", {"dates": "next_month", "price_status": "free"}),
-        ("tell me more about the second one", {"refers_to": [2], "dates": "next_month"}),
+        ("tell me more about the second one", {"refers_to": [2], "answered": True}),
     ],
     [
         ("robotics talks at Georgia Tech", {"region": "gt"}),
@@ -56,9 +51,16 @@ SCRIPTS: list[list[tuple[str, dict[str, Any]]]] = [
     ],
     [("things to do with kids in the next 3 days", {"dates": "next_days:3"})],
     [("Falcons games between October 10 and October 31", {"dates": "10-10..10-31"})],
+    [("underwater basket weaving championship", {"admits_no_match": True, "max_cards": 2})],
+    [("sunrise paddleboard yoga on a lake", {"admits_no_match": True, "max_cards": 2})],
     [("hi", {"clarify": True})],
     [("what about the second one?", {"clarify": True})],
 ]
+
+
+_NO_MATCH = re.compile(
+    r"\b(couldn.?t|could not|didn.?t|did not|no exact|none of|isn.?t any|aren.?t any)\b", re.I
+)
 
 
 @dataclass
@@ -69,54 +71,33 @@ class Conversation:
 
 @dataclass
 class Session:
-    connection: AsyncConnection[dict[str, Any]]
-    openai: AsyncOpenAI
-    index: AsyncIndex
-    repository: EventRepository
-    model: str
+    graph: CompiledStateGraph[Turn, None, Turn, Turn]
     today: date
 
-    async def turn(self, conversation: Conversation, message: str) -> SearchIntent:
-        """Parse one message, update the conversation's search, and show what it finds."""
+    async def turn(self, conversation: Conversation, message: str) -> TurnResult:
+        """Answer one message and carry its search and shown events into the next."""
         started = time.perf_counter()
-        intent = await parse_intent(
-            self.openai, self.model, message, conversation.state, conversation.shown, self.today
+        result = await answer(
+            self.graph, message, self.today, conversation.state, conversation.shown
         )
-        print(f"  (understood in {time.perf_counter() - started:.1f}s)")
-        referenced = [
-            conversation.shown[position - 1]
-            for position in intent.refers_to
-            if 0 < position <= len(conversation.shown)
-        ]
-        if intent.refers_to and not referenced and not intent.clarification:
-            question = "Which event do you mean? I haven't shown that one."
-            intent = intent.model_copy(update={"clarification": question})
-        if intent.clarification:
-            print(f"  asks: {intent.clarification}")
-            return intent
-        for event in referenced:
-            print(f"  about: {_describe(event)}")
-        if intent.changes_search or (conversation.state is None and not referenced):
-            conversation.state = apply_intent(conversation.state, intent, self.today)
-            print(f"  search: {_summary(conversation.state)}")
-            async with self.connection.transaction():
-                await self.connection.execute(
-                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-                )
-                results = await search_events(
-                    self.repository,
-                    self.openai,
-                    self.index,
-                    conversation.state.query,
-                    conversation.state.filters(),
-                    keywords=conversation.state.keyword_query(),
-                )
-            conversation.shown = results.hybrid
-            for position, event in enumerate(results.hybrid, start=1):
-                print(f"  {position}. {_describe(event)}")
-            if not results.hybrid:
-                print("  (no matching events)")
-        return intent
+        print(f"  ({time.perf_counter() - started:.1f}s)")
+        if result.clarification:
+            print(f"  asks: {result.clarification}")
+            return result
+        if result.searched and result.search is not None:
+            print(f"  search: {_summary(result.search)}")
+        if result.broader:
+            print(f"  searched more broadly for: {result.broader}")
+        if result.reply:
+            print(textwrap.fill(result.reply, 100, initial_indent="  ", subsequent_indent="  "))
+        if result.note:
+            print(f"  note: {result.note}")
+        for position, event in enumerate(result.cards, start=1):
+            print(f"  {position}. {_describe(event)}")
+        conversation.state = result.search
+        if result.searched:
+            conversation.shown = result.cards
+        return result
 
 
 def main() -> int:
@@ -151,14 +132,15 @@ async def _chat(settings: Settings, *, scripted: bool) -> int:
         AsyncPinecone(api_key=settings.pinecone_api_key.get_secret_value()) as pinecone,
     ):
         async with await pinecone.index(settings.pinecone_index) as index:
-            session = Session(
+            services = Services(
                 connection,
+                EventRepository(connection, enabled),
                 openai,
                 index,
-                EventRepository(connection, enabled),
                 settings.intent_model,
-                datetime.now(CATALOG_TIMEZONE).date(),
+                settings.answer_model,
             )
+            session = Session(build_graph(services), datetime.now(CATALOG_TIMEZONE).date())
             if not scripted:
                 conversation = Conversation()
                 print("Ask about events around Georgia Tech and Atlanta; an empty line quits.")
@@ -175,8 +157,8 @@ async def _chat(settings: Settings, *, scripted: bool) -> int:
                 for message, expected in script:
                     print(f"\n> {message}")
                     before = conversation.state
-                    intent = await session.turn(conversation, message)
-                    failures = _check(expected, intent, before, conversation.state, session.today)
+                    result = await session.turn(conversation, message)
+                    failures = _check(expected, result, before, session.today)
                     for failure in failures:
                         print(f"  MISMATCH {failure}")
                     met += len(expected) - len(failures)
@@ -186,20 +168,25 @@ async def _chat(settings: Settings, *, scripted: bool) -> int:
 
 
 def _check(
-    expected: dict[str, Any],
-    intent: SearchIntent,
-    before: SearchState | None,
-    after: SearchState | None,
-    today: date,
+    expected: dict[str, Any], result: TurnResult, before: SearchState | None, today: date
 ) -> list[str]:
+    after = result.search
     failures = []
     for key, want in expected.items():
         got: Any
         match key:
             case "clarify":
-                got = intent.clarification is not None
+                got = result.clarification is not None
+            case "answered":
+                got = result.reply is not None
+            case "cards":
+                got = len(result.cards)
+            case "max_cards":
+                got, want = len(result.cards) <= want, True
+            case "admits_no_match":
+                got = bool(_NO_MATCH.search(result.reply or ""))
             case "refers_to":
-                got = intent.refers_to
+                got = result.intent.refers_to if result.intent else []
             case "same_topic":
                 got = before is not None and after is not None and after.query == before.query
             case "dates":

@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.135,<1",
     "httpx>=0.28,<1",
     "icalendar>=6,<8",
+    "langgraph>=1.2,<2",
     "openai>=3.19,<4",
     "pinecone>=10,<11",
     "psycopg[binary]>=3.2,<4",
