@@ -12,6 +12,7 @@
     "ingest": "uv run --directory apps/api --locked python -m app.ingestion",
     "index": "uv run --directory apps/api --locked python -m app.indexing",
     "search": "uv run --directory apps/api --locked python -m app.search",
+    "chat": "uv run --directory apps/api --locked python -m app.assistant",
     "lint": "pnpm --filter @eventscout/web lint",
     "typecheck": "pnpm --filter @eventscout/web typecheck",
     "build": "pnpm --filter @eventscout/web build",

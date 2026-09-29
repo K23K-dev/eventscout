@@ -84,6 +84,13 @@ class EventResponse(EventContent):
     )
     sources: list[EventSource]
 
+    @property
+    def first_day(self) -> date | None:
+        """The Atlanta calendar date the event starts on."""
+        if self.start_date is not None:
+            return self.start_date
+        return self.starts_at.astimezone(CATALOG_TIMEZONE).date() if self.starts_at else None
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def is_stale(self) -> bool:

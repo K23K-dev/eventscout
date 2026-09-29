@@ -56,16 +56,7 @@ def main() -> int:
     if bool(args.query) == args.spot_checks:
         parser.error("give either a search query or --spot-checks")
     settings = Settings()
-    missing = [
-        name
-        for name, value in (
-            ("EVENTSCOUT_DATABASE_URL", settings.database_url),
-            ("EVENTSCOUT_OPENAI_API_KEY", settings.openai_api_key),
-            ("EVENTSCOUT_PINECONE_API_KEY", settings.pinecone_api_key),
-        )
-        if value is None or not value.get_secret_value().strip()
-    ]
-    if missing:
+    if missing := settings.missing("database_url", "openai_api_key", "pinecone_api_key"):
         parser.error(f"set {', '.join(missing)} in apps/api/.env")
     requested = SPOT_CHECKS
     if args.query:
@@ -139,10 +130,7 @@ def _print(query: str, filters: EventFilters, results: SearchResults) -> None:
 
 
 def _describe(event: EventResponse) -> str:
-    start = event.start_date
-    if start is None and event.starts_at is not None:
-        start = event.starts_at.astimezone(CATALOG_TIMEZONE).date()
-    when = f"{start:%b %d}" if start else "TBA"
+    when = f"{event.first_day:%b %d}" if event.first_day else "TBA"
     return f"{event.title[:60]:<60} {when:>6}  {event.price_status}"
 
 

@@ -25,16 +25,7 @@ def main() -> int:
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
     settings = Settings()
-    missing = [
-        name
-        for name, value in (
-            ("EVENTSCOUT_DATABASE_URL", settings.database_url),
-            ("EVENTSCOUT_OPENAI_API_KEY", settings.openai_api_key),
-            ("EVENTSCOUT_PINECONE_API_KEY", settings.pinecone_api_key),
-        )
-        if value is None or not value.get_secret_value().strip()
-    ]
-    if missing:
+    if missing := settings.missing("database_url", "openai_api_key", "pinecone_api_key"):
         parser.error(f"set {', '.join(missing)} in apps/api/.env")
     try:
         # Psycopg's async connections require a selector loop on Windows.

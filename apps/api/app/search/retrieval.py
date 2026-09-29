@@ -89,15 +89,22 @@ async def search_events(
     query: str,
     filters: EventFilters,
     *,
+    keywords: str | None = None,
     limit: int = 5,
     depth: int = 30,
 ) -> SearchResults:
-    """Rank by keywords and by meaning, fuse, and drop anything that fails a filter."""
+    """Rank by keywords and by meaning, fuse, and drop anything that fails a filter.
+
+    Keywords default to the query itself. Without a query, only the structured filters and
+    keywords apply, and events come soonest first.
+    """
+    text = query if keywords is None else keywords
     ranked = filters.model_copy(
-        update={"q": query, "sort": "relevance", "page": 1, "page_size": depth}
+        update={"q": text.strip() or None, "sort": "relevance", "page": 1, "page_size": depth}
     )
     keyword_page, (vector_ids, vector_error) = await asyncio.gather(
-        repository.search(ranked), _vector_ranking(openai, index, query, filters, depth)
+        repository.search(ranked),
+        _vector_ranking(openai, index, query, filters, depth) if query.strip() else _no_ranking(),
     )
     keyword_ids = [event.id for event in keyword_page.items]
     fused = fuse(keyword_ids, vector_ids)
@@ -133,3 +140,7 @@ async def _vector_ranking(
         logger.warning("Vector search unavailable (%s); using keyword results", type(exc).__name__)
         return [], type(exc).__name__
     return [UUID(match.id) for match in matches.matches], None
+
+
+async def _no_ranking() -> tuple[list[UUID], str | None]:
+    return [], None
