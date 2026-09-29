@@ -18,6 +18,9 @@ def main() -> int:
     parser.add_argument(
         "--limit", type=int, help="process at most this many queued jobs (default: all)"
     )
+    parser.add_argument(
+        "--reindex", action="store_true", help="queue every event again before processing"
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
@@ -37,7 +40,7 @@ def main() -> int:
         # Psycopg's async connections require a selector loop on Windows.
         loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
         with asyncio.Runner(loop_factory=loop_factory) as runner:
-            report = runner.run(run_indexing(settings, limit=args.limit))
+            report = runner.run(run_indexing(settings, limit=args.limit, reindex=args.reindex))
     except KeyboardInterrupt:
         print("Indexing interrupted. Rerun the command to resume safely.", file=sys.stderr)
         return 130

@@ -31,4 +31,5 @@ Web: <http://localhost:5173> · API docs: <http://127.0.0.1:8000/docs>
 | `pnpm ingest --dry-run` | Preview the next 90 days of events |
 | `pnpm ingest` | Import events into Supabase |
 | `pnpm index` | Embed new or changed events into Pinecone |
+| `pnpm search "jazz"` | Compare keyword, vector, and hybrid results; `--spot-checks` runs the saved queries |
 | `pnpm check` | Run lint, formatting, type checks, and the web build |

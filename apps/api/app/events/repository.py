@@ -106,6 +106,20 @@ class EventRepository:
         row = await cursor.fetchone()
         return EventResponse.model_validate(row) if row is not None else None
 
+    async def get_many(self, event_ids: list[UUID], filters: EventFilters) -> list[EventResponse]:
+        """Listed events among the given IDs that pass every filter except the keywords."""
+        if not event_ids:
+            return []
+        where, parameters = self._search_conditions(filters.model_copy(update={"q": None}))
+        cursor = await self._connection.execute(
+            sql.SQL("""
+                SELECT {}, provenance.last_observed_at, provenance.sources
+                FROM eventscout.event_occurrences e {} WHERE e.id = ANY(%(ids)s) AND {}
+            """).format(_PUBLIC_COLUMNS, _SOURCE_DETAILS, where),
+            {**parameters, "ids": event_ids},
+        )
+        return [EventResponse.model_validate(row) for row in await cursor.fetchall()]
+
     def _search_conditions(self, filters: EventFilters) -> tuple[sql.Composed, dict[str, Any]]:
         parameters: dict[str, Any] = {
             "enabled_sources": list(self._enabled_sources),

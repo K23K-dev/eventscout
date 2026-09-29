@@ -11,6 +11,7 @@
     "dev:api": "uv run --directory apps/api uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
     "ingest": "uv run --directory apps/api --locked python -m app.ingestion",
     "index": "uv run --directory apps/api --locked python -m app.indexing",
+    "search": "uv run --directory apps/api --locked python -m app.search",
     "lint": "pnpm --filter @eventscout/web lint",
     "typecheck": "pnpm --filter @eventscout/web typecheck",
     "build": "pnpm --filter @eventscout/web build",

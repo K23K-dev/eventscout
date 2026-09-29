@@ -27,6 +27,7 @@ _CONTENT_COLUMNS = sql.SQL(", ").join(sql.Identifier(name) for name in EventCont
 
 @dataclass
 class IndexReport:
+    requeued: int = 0
     claimed: int = 0
     embedded: int = 0
     removed: int = 0
@@ -68,17 +69,26 @@ def event_bounds(content: EventContent) -> tuple[datetime, datetime] | None:
 
 def vector_metadata(content: EventContent, bounds: tuple[datetime, datetime]) -> dict[str, Any]:
     """Coarse filters for dense search; Postgres rechecks every hard filter afterwards."""
-    return {
+    metadata: dict[str, Any] = {
         "starts_at": int(bounds[0].timestamp()),
         "ends_at": int(bounds[1].timestamp()),
         "region": content.region,
         "price_status": content.price_status,
         "location_kind": content.location_kind,
     }
+    if content.audience:
+        metadata["audience"] = [label.casefold() for label in content.audience]
+    return metadata
 
 
-async def run_indexing(settings: Settings, *, limit: int | None = None) -> IndexReport:
-    """Create the index on first use, then embed, remove, or skip queued events."""
+async def run_indexing(
+    settings: Settings, *, limit: int | None = None, reindex: bool = False
+) -> IndexReport:
+    """Create the index on first use, then embed, remove, or skip queued events.
+
+    With reindex, every event's current version is queued again first, to apply a change
+    in how events are embedded or described.
+    """
     assert settings.openai_api_key is not None and settings.pinecone_api_key is not None
     async with (
         connect_database(settings) as connection,
@@ -95,8 +105,21 @@ async def run_indexing(settings: Settings, *, limit: int | None = None) -> Index
                     }
                 },
             )
+        requeued = 0
+        if reindex:
+            cursor = await connection.execute(
+                """UPDATE eventscout.index_jobs j SET
+                       status = 'pending', attempts = 0, available_at = clock_timestamp(),
+                       locked_at = NULL, finished_at = NULL, last_error = NULL
+                   FROM eventscout.event_occurrences e
+                   WHERE j.event_id = e.id AND j.content_version = e.content_version
+                     AND j.status IN ('succeeded', 'failed')"""
+            )
+            requeued = cursor.rowcount
         async with await pinecone.index(settings.pinecone_index) as index:
-            return await _drain(connection, openai, index, limit)
+            report = await _drain(connection, openai, index, limit)
+            report.requeued = requeued
+            return report
 
 
 async def _drain(
