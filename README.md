@@ -2,7 +2,9 @@
 
 Event discovery for Georgia Tech and Atlanta, built with React, TypeScript, FastAPI, and Supabase.
 
-In development. Event ingestion, keyword search, and the browsing UI are implemented; AI search is next.
+In development. Browsing, keyword search, and AI chat search are implemented; sign-in and deployment are next.
+
+**Ask** (`/ask`) answers requests like "free jazz this weekend" from real listings: GPT-5.6 turns each message into a search, hybrid keyword and vector retrieval finds candidates, and a LangGraph pipeline writes a short answer whose citations are checked against the results. Progress, event cards, and the answer stream to the page as they're ready, and follow-ups such as "only free ones" keep the earlier context. Until Google sign-in lands, set `EVENTSCOUT_ALLOW_CHAT_WITHOUT_LOGIN=true` in `apps/api/.env` to try it locally.
 
 ## Development
 

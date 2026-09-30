@@ -133,7 +133,7 @@ export function App() {
           ) : (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
-                {query.data.items.map(event => <EventCard key={event.id} event={event} search={currentSearch} />)}
+                {query.data.items.map(event => <EventCard key={event.id} event={event} backTo={`/${currentSearch}`} />)}
               </div>
               <nav className="mt-8 flex items-center justify-between gap-3 border-t border-line pt-6 text-xs" aria-label="Event pages">
                 <button type="button" disabled={query.data.page <= 1} onClick={() => goToPage(query.data.page - 1)} className="min-h-11 cursor-pointer rounded-lg border border-line bg-white px-4 font-semibold hover:border-scout disabled:cursor-default disabled:opacity-40">← Previous</button>

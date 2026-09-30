@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Link, Route, Routes } from 'react-router-dom'
 import { App } from './App'
 import { PageShell } from './components/PageShell'
+import { Ask } from './pages/Ask'
 import { EventDetail } from './pages/EventDetail'
 import './styles.css'
 
@@ -17,6 +18,7 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/" element={<App />} />
           <Route path="/events/:eventId" element={<EventDetail />} />
+          <Route path="/ask/:conversationId?" element={<Ask />} />
           <Route path="*" element={
               <main id="main" tabIndex={-1} className="flex flex-1 flex-col items-start py-20 focus:outline-none">
                 <title>Page not found · EventScout</title>

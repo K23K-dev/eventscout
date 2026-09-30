@@ -3,7 +3,7 @@ import { useState } from 'react'
 import type { Event } from '../api'
 import { addDays, calendarDate, checkedAt, eventDate, eventTime, formatDate, locationLabels, priceLabels, today } from '../events'
 
-export function EventCard({ event, search }: { event: Event; search: string }) {
+export function EventCard({ event, backTo }: { event: Event; backTo: string }) {
   const [now] = useState(Date.now)
   const start = event.all_day ? event.start_date : event.starts_at
   const end = event.all_day && event.end_date ? addDays(event.end_date, -1) : event.ends_at
@@ -29,7 +29,7 @@ export function EventCard({ event, search }: { event: Event; search: string }) {
       </div>
       <p className="mb-2 truncate text-[10px] font-semibold tracking-widest text-muted uppercase">{event.sources[0]?.publisher || (event.region === 'gt' ? 'Georgia Tech' : 'Atlanta')}</p>
       <h3 className="text-lg leading-snug font-semibold tracking-tight">
-        <Link className="decoration-scout underline-offset-4 hover:text-scout hover:underline" to={`/events/${event.id}`} state={{ search }}>
+        <Link className="decoration-scout underline-offset-4 hover:text-scout hover:underline" to={`/events/${event.id}`} state={{ backTo }}>
           {event.title}
         </Link>
       </h3>

@@ -14,8 +14,8 @@ const sourceHealthLabels = {
 export function EventDetail() {
   const { eventId = '' } = useParams()
   const location = useLocation()
-  const search = location.state?.search
-  const backTo = typeof search === 'string' && search.startsWith('?') ? `/${search}` : '/'
+  const from = location.state?.backTo
+  const backTo = typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') ? from : '/'
   const query = useQuery({
     queryKey: ['event', eventId],
     queryFn: ({ signal }) => fetchEvent(eventId, signal),
@@ -25,7 +25,7 @@ export function EventDetail() {
   return (
     <main id="main" tabIndex={-1} className="flex-1 py-9 focus:outline-none sm:py-14">
       <Link to={backTo} className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-scout hover:underline">
-        <span aria-hidden="true">←</span> Back to events
+        <span aria-hidden="true">←</span> {backTo.startsWith('/ask') ? 'Back to chat' : 'Back to events'}
       </Link>
 
       {query.isPending ? (
