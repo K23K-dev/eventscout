@@ -13,6 +13,7 @@ dependencies = [
     "pinecone>=10,<11",
     "psycopg[binary]>=3.2,<4",
     "pydantic-settings>=2,<3",
+    "pyjwt[crypto]>=2.10,<3",
     "tzdata>=2025.2",
     "uvicorn[standard]>=0.34,<1",
 ]

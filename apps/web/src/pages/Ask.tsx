@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ApiError, askEvents, deleteConversation, fetchConversation, fetchConversations, type Answer as AnswerData, type Event, type Stage } from '../api'
+import { signIn, useSession } from '../auth'
 import { Answer } from '../components/Answer'
 import { EventCard } from '../components/EventCard'
 
@@ -29,16 +30,23 @@ export function Ask() {
   const { conversationId } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const session = useSession()
+  // Each account's chats are cached apart; undefined until a saved sign-in is restored.
+  const account = session === undefined ? undefined : session?.user.id ?? 'guest'
   const [draft, setDraft] = useState('')
   const [pending, setPending] = useState<Pending | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
   const streaming = !!pending && !pending.answer && !pending.error
-  const conversations = useQuery({ queryKey: ['conversations'], queryFn: ({ signal }) => fetchConversations(signal) })
+  const conversations = useQuery({
+    queryKey: ['conversations', account],
+    queryFn: ({ signal }) => fetchConversations(signal),
+    enabled: account !== undefined,
+  })
   const conversation = useQuery({
-    queryKey: ['conversation', conversationId],
+    queryKey: ['conversation', account, conversationId],
     queryFn: ({ signal }) => fetchConversation(conversationId!, signal),
-    enabled: !!conversationId,
+    enabled: account !== undefined && !!conversationId,
     // After a refresh mid-answer the server keeps writing; check back until it's saved.
     refetchInterval: query => (!streaming && query.state.data?.turns.some(turn => turn.status === 'running') ? 2000 : false),
   })
@@ -91,7 +99,7 @@ export function Ask() {
       return
     }
     await queryClient.invalidateQueries({ queryKey: ['conversations'] })
-    if (saved) await queryClient.invalidateQueries({ queryKey: ['conversation', saved] })
+    if (saved) await queryClient.invalidateQueries({ queryKey: ['conversation', account, saved] })
     setPending(current => (current?.requestId === requestId && !current.error ? null : current))
   }
 
@@ -103,7 +111,7 @@ export function Ask() {
       window.alert(error instanceof Error ? error.message : 'That conversation could not be deleted.')
       return
     }
-    queryClient.removeQueries({ queryKey: ['conversation', id] })
+    queryClient.removeQueries({ queryKey: ['conversation', account, id] })
     await queryClient.invalidateQueries({ queryKey: ['conversations'] })
     if (id === conversationId) navigate('/ask')
   }
@@ -111,6 +119,25 @@ export function Ask() {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void send(draft)
+  }
+
+  // Guests sign in first, unless the API lets them chat (local scripts only).
+  const guestRefused = conversations.isPending || (conversations.error instanceof ApiError && conversations.error.status === 401)
+  if (session === null && guestRefused) {
+    return (
+      <main id="main" tabIndex={-1} className="flex-1 py-10 focus:outline-none sm:py-14">
+        <title>Ask about events · EventScout</title>
+        <section aria-labelledby="ask-heading" className="max-w-xl">
+          <h1 id="ask-heading" className="font-display text-[clamp(2.2rem,4vw,3.25rem)] leading-tight font-semibold tracking-[-0.035em]">Ask about events</h1>
+          <p className="mt-3 text-sm leading-relaxed text-muted">
+            Say what you’re in the mood for, like “free jazz this weekend,” and get picks from real listings, each linked to its event. Sign in with Google to start chatting. Browsing stays open to everyone.
+          </p>
+          <button type="button" onClick={() => void signIn()} className="mt-6 min-h-11 cursor-pointer rounded-lg bg-scout px-5 text-sm font-semibold text-white hover:bg-ink">
+            Sign in with Google
+          </button>
+        </section>
+      </main>
+    )
   }
 
   return (

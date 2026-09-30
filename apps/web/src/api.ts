@@ -1,3 +1,5 @@
+import { accessToken } from './auth'
+
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 const apiBaseUrl = (configuredBaseUrl || 'http://127.0.0.1:8000').replace(/\/+$/, '')
 
@@ -66,9 +68,10 @@ const catalogErrors: Record<number, string> = {
   422: 'Check your search filters and choose a date range of 1–90 days.',
 }
 
-async function request<T>(path: string, signal: AbortSignal, errors = catalogErrors): Promise<T> {
+async function request<T>(path: string, signal: AbortSignal, errors = catalogErrors, headers: HeadersInit = {}): Promise<T> {
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, {
+      headers,
       signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
     })
     if (!response.ok) {
@@ -130,16 +133,23 @@ const chatErrors: Record<number, string> = {
   422: 'Messages can be up to 500 characters.',
 }
 
-export function fetchConversations(signal: AbortSignal): Promise<ConversationSummary[]> {
-  return request<ConversationSummary[]>('/api/conversations', signal, chatErrors)
+/** Chat requests carry the Google sign-in; the API answers 401 without one. */
+async function signedIn(): Promise<Record<string, string>> {
+  const token = await accessToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-export function fetchConversation(id: string, signal: AbortSignal): Promise<Conversation> {
-  return request<Conversation>(`/api/conversations/${encodeURIComponent(id)}`, signal, chatErrors)
+export async function fetchConversations(signal: AbortSignal): Promise<ConversationSummary[]> {
+  return request<ConversationSummary[]>('/api/conversations', signal, chatErrors, await signedIn())
+}
+
+export async function fetchConversation(id: string, signal: AbortSignal): Promise<Conversation> {
+  return request<Conversation>(`/api/conversations/${encodeURIComponent(id)}`, signal, chatErrors, await signedIn())
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => null)
+  const headers = await signedIn()
+  const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE', headers }).catch(() => null)
   if (!response?.ok && response?.status !== 404) {
     throw new ApiError(response?.status ?? 0, 'That conversation could not be deleted. Please try again.')
   }
@@ -150,11 +160,12 @@ export async function askEvents(
   body: { message: string; request_id: string; conversation_id?: string },
   onEvent: (event: TurnEvent) => void,
 ): Promise<void> {
+  const auth = await signedIn()
   let response: Response
   try {
     response = await fetch(`${apiBaseUrl}/api/turns`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...auth },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(90_000),
     })

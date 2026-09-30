@@ -10,6 +10,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from openai import AsyncOpenAI
 from pinecone import AsyncIndex, AsyncPinecone
@@ -26,6 +27,7 @@ from app.assistant.models import (
     TurnView,
 )
 from app.assistant.store import ConversationStore, TurnInProgress
+from app.auth import InvalidToken, KeysUnavailable, TokenVerifier, User
 from app.database import connect_database
 from app.events.models import CATALOG_TIMEZONE, ErrorResponse, EventResponse
 from app.events.repository import EventRepository
@@ -33,7 +35,7 @@ from app.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-# Until Google login exists, local development chats as this one owner.
+# With EVENTSCOUT_ALLOW_CHAT_WITHOUT_LOGIN (local scripts only), guests chat as this one owner.
 LOCAL_OWNER = UUID("00000000-0000-0000-0000-00000000c0de")
 _FAILED = "Something went wrong answering that. Please try again."
 
@@ -105,10 +107,37 @@ def create_assistant_router(
         },
     )
 
-    async def current_owner() -> UUID:
-        if settings.allow_chat_without_login:
-            return LOCAL_OWNER
-        raise HTTPException(status_code=401, detail="Sign in to use AI search.")
+    bearer = HTTPBearer(
+        auto_error=False, description="A Supabase access token from Google sign-in."
+    )
+    verifier = TokenVerifier(settings.supabase_url) if settings.supabase_url else None
+
+    async def current_user(
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    ) -> User:
+        challenge = {"WWW-Authenticate": "Bearer"}
+        if credentials is None:
+            if settings.allow_chat_without_login:
+                return User(id=LOCAL_OWNER)
+            raise HTTPException(
+                status_code=401, detail="Sign in to use AI search.", headers=challenge
+            )
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="Sign-in isn't configured.")
+        try:
+            return await verifier.user(credentials.credentials)
+        except InvalidToken:
+            raise HTTPException(
+                status_code=401, detail="Sign in again to use AI search.", headers=challenge
+            ) from None
+        except KeysUnavailable:
+            logger.exception("Could not fetch the Supabase signing keys")
+            raise HTTPException(
+                status_code=503, detail="Sign-in is temporarily unavailable."
+            ) from None
+
+    async def current_owner(user: Annotated[User, Depends(current_user)]) -> UUID:
+        return user.id
 
     async def database() -> AsyncGenerator[AsyncConnection[dict[str, Any]]]:
         async with AsyncExitStack() as stack:
@@ -334,5 +363,10 @@ def create_assistant_router(
         """Delete a conversation and all of its turns."""
         if not await ConversationStore(connection, owner).delete(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
+
+    @router.get("/me", response_model=User, operation_id="getMe")
+    async def me(user: Annotated[User, Depends(current_user)]) -> User:
+        """The account the chat endpoints act for."""
+        return user
 
     return router

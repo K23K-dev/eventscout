@@ -2,9 +2,9 @@
 
 Event discovery for Georgia Tech and Atlanta, built with React, TypeScript, FastAPI, and Supabase.
 
-In development. Browsing, keyword search, and AI chat search are implemented; sign-in and deployment are next.
+In development. Browsing, keyword search, AI chat search, and Google sign-in are implemented; deployment is next.
 
-**Ask** (`/ask`) answers requests like "free jazz this weekend" from real listings: GPT-5.6 turns each message into a search, hybrid keyword and vector retrieval finds candidates, and a LangGraph pipeline writes a short answer whose citations are checked against the results. Progress, event cards, and the answer stream to the page as they're ready, and follow-ups such as "only free ones" keep the earlier context. Until Google sign-in lands, set `EVENTSCOUT_ALLOW_CHAT_WITHOUT_LOGIN=true` in `apps/api/.env` to try it locally.
+**Ask** (`/ask`) answers requests like "free jazz this weekend" from real listings: GPT-5.6 turns each message into a search, hybrid keyword and vector retrieval finds candidates, and a LangGraph pipeline writes a short answer whose citations are checked against the results. Progress, event cards, and the answer stream to the page as they're ready, and follow-ups such as "only free ones" keep the earlier context. Chatting requires Google sign-in through Supabase, and each account sees only its own conversations; browsing stays open to everyone.
 
 ## Development
 
@@ -16,6 +16,8 @@ uv sync --directory apps/api --locked
 ```
 
 For ingestion, create `apps/api/.env` from `.env.example` if missing and set `EVENTSCOUT_DATABASE_URL` to the hosted Supabase session-pooler connection string. The database schema is managed in Supabase. A GitHub Actions workflow imports and indexes events every six hours; it reads `EVENTSCOUT_DATABASE_URL`, `EVENTSCOUT_OPENAI_API_KEY`, and `EVENTSCOUT_PINECONE_API_KEY` from repository secrets.
+
+For sign-in, enable Supabase's Google provider and allow `http://localhost:5173/**` and `http://127.0.0.1:5173/**` as redirect URLs. Then set `EVENTSCOUT_SUPABASE_URL` in `apps/api/.env`, and create `apps/web/.env` from its `.env.example` with the project URL and publishable key. Local scripts can skip sign-in with `EVENTSCOUT_ALLOW_CHAT_WITHOUT_LOGIN=true`, which must never be set anywhere reachable from the internet.
 
 Run in separate terminals:
 
