@@ -106,6 +106,20 @@ class EventRepository:
         row = await cursor.fetchone()
         return EventResponse.model_validate(row) if row is not None else None
 
+    async def get_by_ids(self, event_ids: list[UUID]) -> list[EventResponse]:
+        """Events in the given order, whatever their date or status, as earlier turns showed."""
+        if not event_ids:
+            return []
+        cursor = await self._connection.execute(
+            sql.SQL("""
+                SELECT {}, provenance.last_observed_at, provenance.sources
+                FROM eventscout.event_occurrences e {} WHERE e.id = ANY(%(ids)s)
+                ORDER BY array_position(%(ids)s::uuid[], e.id)
+            """).format(_PUBLIC_COLUMNS, _SOURCE_DETAILS),
+            {"ids": event_ids, "enabled_sources": list(self._enabled_sources)},
+        )
+        return [EventResponse.model_validate(row) for row in await cursor.fetchall()]
+
     async def get_many(self, event_ids: list[UUID], filters: EventFilters) -> list[EventResponse]:
         """Listed events among the given IDs that pass every filter except the keywords."""
         if not event_ids:

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     intent_model: str = "gpt-5.6-luna"
     answer_model: str = "gpt-5.6-luna"
     enrichment_model: str = "gpt-5.6-luna"
+    allow_chat_without_login: bool = False
 
     def missing(self, *names: str) -> list[str]:
         """Environment variables a command needs that are unset or blank."""

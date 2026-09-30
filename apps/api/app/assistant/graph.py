@@ -7,6 +7,7 @@ explains them; code checks each citation before anything is shown.
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, TypedDict, cast
@@ -249,20 +250,25 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
     return graph.compile()
 
 
-async def answer(
+async def run_turn(
     graph: CompiledStateGraph[Turn, None, Turn, Turn],
     message: str,
     today: date,
     previous: SearchState | None,
     shown: list[EventResponse],
-) -> TurnResult:
-    """Run one turn; `shown` numbers the events a follow-up like "the second one" can mean."""
-    turn = cast(
-        Turn,
-        await graph.ainvoke(
-            {"message": message, "today": today, "previous": previous, "shown": shown}
-        ),
-    )
+) -> AsyncIterator[tuple[str, Turn]]:
+    """Yield each step's name with the turn so far, so callers can report progress.
+
+    `shown` numbers the events a follow-up like "the second one" can mean.
+    """
+    turn: Turn = {"message": message, "today": today, "previous": previous, "shown": shown}
+    async for update in graph.astream(turn, stream_mode="updates"):
+        for node, changes in update.items():
+            turn.update(cast(Turn, changes))
+            yield node, turn
+
+
+def turn_result(turn: Turn, previous: SearchState | None) -> TurnResult:
     return TurnResult(
         reply=turn.get("reply"),
         cards=turn.get("cards", []),
@@ -273,6 +279,20 @@ async def answer(
         note=turn.get("note"),
         intent=turn.get("intent"),
     )
+
+
+async def answer(
+    graph: CompiledStateGraph[Turn, None, Turn, Turn],
+    message: str,
+    today: date,
+    previous: SearchState | None,
+    shown: list[EventResponse],
+) -> TurnResult:
+    """Run one turn to completion."""
+    turn: Turn = {"message": message, "today": today, "previous": previous, "shown": shown}
+    async for _, state in run_turn(graph, message, today, previous, shown):
+        turn = state
+    return turn_result(turn, previous)
 
 
 async def draft_reply(
