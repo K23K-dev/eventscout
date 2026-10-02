@@ -6,16 +6,22 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from html import unescape
-from typing import Literal
 from urllib.parse import unquote, urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import localize, node_text
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    MEMBERS_ONLY,
+    described_price,
+    localize,
+    location_kind,
+)
+from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -28,10 +34,6 @@ class _Listing:
     external_id: str
     url: str
     day: date
-
-
-def _text(node: Tag | BeautifulSoup | None) -> str:
-    return node_text(node, decode_entities=True)
 
 
 def _url(value: str, *, internal: bool = False) -> str:
@@ -125,28 +127,8 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
         ),
         None,
     )
-    kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    if re.search(r"\bhybrid\b", venue, re.I):
-        kind = "hybrid"
-    elif re.search(r"\b(?:online|virtual|zoom)\b", venue, re.I):
-        kind = "online"
-    elif venue and venue.casefold() not in {"tba", "tbd", "location tbd"}:
-        kind = "in_person"
-    audience = (
-        ["Atlanta Tech Village members"] if re.search(r"\bmembers?[- ]only\b", title, re.I) else []
-    )
-    price_status: Literal["free", "paid", "conditional", "unknown"] = "unknown"
-    price_details = None
-    if match := re.search(
-        r"\b(?:tickets?|admission|registration)\s+(?:are |is )?(?:only )?\$\s*\d+(?:\.\d{2})?",
-        description,
-        re.I,
-    ):
-        price_status, price_details = "paid", match.group(0)
-    elif match := re.search(
-        r"\b(?:free (?:admission|event|workshop)|event is free)\b", description, re.I
-    ):
-        price_status, price_details = "free", match.group(0)
+    audience = ["Atlanta Tech Village members"] if MEMBERS_ONLY.search(title) else []
+    price_status, price_details = described_price(description)
     content = EventContent(
         title=title,
         description=description,
@@ -154,16 +136,14 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
         ends_at=ends_at,
         timezone=_TIMEZONE.key,
         venue=venue or None,
-        location_kind=kind,
+        location_kind=location_kind(venue),
         region="atlanta",
         audience=audience,
         price_status=price_status,
         price_details=price_details,
         source_url=HttpUrl(listing.url),
         registration_url=HttpUrl(registration) if registration else None,
-        status="cancelled"
-        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-        else "scheduled",
+        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         external_id=listing.external_id,

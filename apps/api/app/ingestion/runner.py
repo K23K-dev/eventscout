@@ -215,7 +215,7 @@ async def _catalog(connection: AsyncConnection[dict[str, Any]]) -> list[CatalogR
                 source=row["slug"],
                 publisher=row["publisher"],
                 external_id=row["external_id"],
-                priority=source.priority if source and source.enabled else 1000,
+                priority=source.priority if source else 1000,
                 event_id=row["event_id"],
                 canonical_content=canonical,
                 content=EventContent.model_validate(row["observed_content"])
@@ -298,7 +298,7 @@ async def catalog_metrics(
         {
             "start": start,
             "end": end,
-            "enabled_sources": [name for name, source in SOURCES.items() if source.enabled],
+            "enabled_sources": list(SOURCES),
         },
     )
     row = await cursor.fetchone()
@@ -316,12 +316,7 @@ async def run_import(
     """Import selected calendars; repeat observations do not create canonical changes."""
     if not 1 <= days <= 90:
         raise ValueError("days must be between 1 and 90")
-    if not source_names:
-        disabled = [name for name, source in SOURCES.items() if not source.enabled]
-        if disabled:
-            logger.warning("Skipping disabled calendars: %s", ", ".join(disabled))
-    names = source_names or [name for name, source in SOURCES.items() if source.enabled]
-    sources = [SOURCES[name] for name in dict.fromkeys(names)]
+    sources = [SOURCES[name] for name in dict.fromkeys(source_names or SOURCES)]
     start = datetime.now(UTC)
     end = start + timedelta(days=days)
     report = ImportReport(

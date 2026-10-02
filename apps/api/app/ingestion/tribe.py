@@ -5,7 +5,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 from html import unescape
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,7 +14,15 @@ from bs4 import BeautifulSoup
 from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import html_text, issue_message
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    MEMBERS_ONLY,
+    cost_price,
+    issue_message,
+    location_kind,
+    registration_link,
+)
+from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -36,10 +44,6 @@ _ARTSATL_EXCLUDED_SERIES = {
 }
 
 
-def _text(value: object) -> str:
-    return html_text(value, decode_entities=True)
-
-
 def _url(value: object, base: str) -> HttpUrl | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -55,18 +59,6 @@ def _utc(value: object) -> datetime:
         raise ValueError("Missing published UTC event timestamp")
     parsed = datetime.fromisoformat(value)
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-
-
-def _price(cost: str) -> tuple[Literal["free", "paid", "conditional", "unknown"], str | None]:
-    if not cost:
-        return "unknown", None
-    if cost.casefold() in {"free", "0", "$0", "0.00", "$0.00", "no charge"}:
-        return "free", cost
-    if re.search(r"\b(?:free|donation|members?|varies)\b", cost, re.I):
-        return "conditional", cost
-    if re.search(r"\d", cost):
-        return "paid", cost
-    return "unknown", cost
 
 
 def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
@@ -127,41 +119,29 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
             if (value := _text(venue.get(field)))
         )
     )
-    location_kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    if re.search(r"\bhybrid\b", location, re.I):
-        location_kind = "hybrid"
-    elif re.search(r"\b(?:online|virtual|zoom)\b", location, re.I):
-        location_kind = "online"
-    elif location and not re.search(r"\b(?:tba|tbd|various locations)\b", location, re.I):
-        location_kind = "in_person"
-    registration_url = None
-    for anchor in BeautifulSoup(str(event.get("description", "")), "html.parser").select("a"):
-        if re.search(
-            r"\b(?:register|registration|rsvp|tickets?|sign[ -]?up)\b", anchor.get_text(), re.I
-        ):
-            registration_url = _url(anchor.get("href"), str(source_url))
-            if registration_url is not None:
-                break
+    registration = registration_link(
+        BeautifulSoup(str(event.get("description", "")), "html.parser"), str(source_url)
+    )
     website = event.get("website")
     if (
-        registration_url is None
+        registration is None
         and isinstance(website, str)
         and re.search(
             r"(?:eventbrite\.|seetickets\.|freshtix\.|ticket|register|registration|rsvp)",
             website,
             re.I,
         )
+        and (site := _url(website, str(source_url)))
     ):
-        registration_url = _url(website, str(source_url))
-    cost = _text(event.get("cost"))
-    price_status, price_details = _price(cost)
+        registration = str(site)
+    price_status, price_details = cost_price(_text(event.get("cost")))
     tags = [
         label
         for field in ("categories", "tags")
         for item in event.get(field, [])
         if isinstance(item, dict) and (label := _text(item.get("name")))
     ]
-    audience = ["Members only"] if re.search(r"\bmembers?[ -]only\b", title, re.I) else []
+    audience = ["Members only"] if MEMBERS_ONLY.search(title) else []
     modified = event.get("modified_utc")
     revision = (
         _utc(modified) if isinstance(modified, str) and not modified.startswith("0000-") else None
@@ -176,17 +156,15 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         end_date=end_date,
         timezone=zone,
         venue=location or None,
-        location_kind=location_kind,
+        location_kind=location_kind(location),
         region="atlanta",
         price_status=price_status,
         price_details=price_details,
         audience=audience,
         tags=tags,
         source_url=source_url,
-        registration_url=registration_url,
-        status="cancelled"
-        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-        else "scheduled",
+        registration_url=HttpUrl(registration) if registration else None,
+        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     raw_payload = {**event, "feed_urls": [base_url]}
     if ignored_end_reason is not None:
@@ -202,7 +180,6 @@ async def collect(
     window_end: datetime,
     crawl_delay: float = 1,
     excluded_cities: frozenset[str] = frozenset(),
-    overlap_filters: bool = True,
 ) -> SourceCollection:
     """Read up to 100 pages, preserving published recurrence IDs and filtering locally.
 
@@ -217,18 +194,10 @@ async def collect(
     params = {
         "per_page": "50",
         "status": "publish",
+        "starts_before": window_end.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d %H:%M:%S"),
+        "ends_after": window_start.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d %H:%M:%S"),
+        "strict_dates": "true",
     }
-    if overlap_filters:
-        params.update(
-            starts_before=window_end.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d %H:%M:%S"),
-            ends_after=window_start.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d %H:%M:%S"),
-            strict_dates="true",
-        )
-    else:
-        params.update(
-            start_date=window_start.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d"),
-            end_date=window_end.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d"),
-        )
     for page in range(1, 101):
         if page > 1 and crawl_delay > 0:
             await asyncio.sleep(crawl_delay)

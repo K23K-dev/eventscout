@@ -5,7 +5,7 @@ import json
 import re
 from datetime import UTC, datetime
 from html import unescape
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -14,15 +14,19 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import http_url, issue_message, localize, node_text
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    cost_price,
+    described_price,
+    http_url,
+    issue_message,
+    localize,
+    text,
+)
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 _ZONE = ZoneInfo("America/New_York")
-
-
-def _text(node: Tag | None) -> str:
-    return node_text(node, decode_entities=True)
 
 
 def _url(value: object, base: str) -> str:
@@ -61,10 +65,10 @@ def _showing_start(showing: Tag) -> datetime | None:
             value = " ".join(day.split()) + " " + clock.replace(" ", "")
             break
     else:
-        month = _text(showing.select_one(".m-date__month"))
-        day = _text(showing.select_one(".m-date__day"))
-        year = _text(showing.select_one(".m-date__year")).strip(", ")
-        clock = re.sub(r"^at\s*", "", _text(showing.select_one(".m-date__hour")), flags=re.I)
+        month = text(showing.select_one(".m-date__month"))
+        day = text(showing.select_one(".m-date__day"))
+        year = text(showing.select_one(".m-date__year")).strip(", ")
+        clock = re.sub(r"^at\s*", "", text(showing.select_one(".m-date__hour")), flags=re.I)
         value = f"{month} {day} {year} {clock.replace(' ', '')}"
     return localize(datetime.strptime(value, "%B %d %Y %I:%M%p"), _ZONE).astimezone(UTC)
 
@@ -73,31 +77,22 @@ def _parse_detail(
     html: bytes, url: str, calendar_url: str, default_venue: str, window_start: datetime
 ) -> tuple[list[ParsedEvent], list[str]]:
     soup = BeautifulSoup(html, "html.parser")
-    title = _text(soup.select_one("h1"))
+    title = text(soup.select_one("h1"))
     if not title:
         raise ValueError("Missing event title")
-    description = _text(soup.select_one(".event_description"))
+    description = text(soup.select_one(".event_description"))
     schema = _event_schema(soup)
     if not description and isinstance(schema.get("description"), str):
-        description = _text(BeautifulSoup(schema["description"], "html.parser"))
+        description = text(schema["description"])
     venue = default_venue
     cost = ""
     for item in soup.select("li.item"):
-        label = _text(item.select_one(".label"))
+        label = text(item.select_one(".label"))
         if label.casefold() == "venue":
-            venue = _text(item).removeprefix(label).strip() or venue
+            venue = text(item).removeprefix(label).strip() or venue
         elif label.casefold() in {"ticket prices", "ticket price", "price"}:
-            cost = _text(item).removeprefix(label).strip()
-    price_status: Literal["free", "paid", "conditional", "unknown"] = "unknown"
-    if cost:
-        if re.search(r"\b(?:members?|free.*(?:with|for))\b", cost, re.I):
-            price_status = "conditional"
-        elif cost.casefold() in {"free", "$0", "0"}:
-            price_status = "free"
-        elif re.search(r"\$\s*\d", cost):
-            price_status = "paid"
-    elif re.search(r"\b(?:tickets|admission) (?:are|is) free\b", description, re.I):
-        price_status, cost = "free", "Tickets/admission explicitly listed as free"
+            cost = text(item).removeprefix(label).strip()
+    price_status, price_details = cost_price(cost) if cost else described_price(description)
     showings = soup.select("[data-showing-id], [id^='showing_']")
     if not showings:
         last_time = schema.get("endDate") or schema.get("startDate")
@@ -140,10 +135,10 @@ def _parse_detail(
         registration = _url(ticket.get("href"), url) if ticket else None
         cancelled = (
             schema.get("eventStatus") == "https://schema.org/EventCancelled"
-            or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I) is not None
+            or CANCELLED_TITLE.match(title) is not None
             or any(
-                re.fullmatch(r"cancel(?:led|ed)[.!]?", text, re.I)
-                for text in showing.stripped_strings
+                re.fullmatch(r"cancel(?:led|ed)[.!]?", string, re.I)
+                for string in showing.stripped_strings
             )
         )
         performer = schema.get("performer")
@@ -160,7 +155,7 @@ def _parse_detail(
                     location_kind="in_person",
                     region="atlanta",
                     price_status=price_status,
-                    price_details=cost or None,
+                    price_details=price_details,
                     tags=["Sports" if sports else "Live performance"],
                     source_url=HttpUrl(url),
                     registration_url=HttpUrl(registration) if registration else None,

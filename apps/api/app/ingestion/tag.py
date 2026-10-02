@@ -5,16 +5,22 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from icalendar import Calendar
 from pydantic import HttpUrl, JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import publisher_url
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    MEMBERS_ONLY,
+    described_price,
+    location_kind,
+    publisher_url,
+)
+from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -25,12 +31,6 @@ LISTING_URL = "https://members.tagonline.org/calendar"
 class _Listing:
     external_id: str
     url: str
-
-
-def _text(value: str | Tag | None) -> str:
-    if isinstance(value, str):
-        value = BeautifulSoup(value, "html.parser")
-    return " ".join(value.get_text(" ", strip=True).split()) if value else ""
 
 
 def _internal_url(value: str, prefix: str) -> str:
@@ -120,38 +120,19 @@ def _parse(
     venue_name = str(location.get("name") or "") if isinstance(location, dict) else ""
     venue_address = str(event.get("LOCATION") or "").strip()
     venue = ", ".join(part for part in (venue_name, venue_address) if part)
-    kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    if re.search(r"\bhybrid\b", venue, re.I):
-        kind = "hybrid"
-    elif re.search(r"\b(?:virtual|online|zoom)\b", venue, re.I):
-        kind = "online"
-    elif venue and venue_name.casefold() not in {"tbd", "tba", "to be determined"}:
-        kind = "in_person"
+    kind = location_kind(venue)
     # TAG operates statewide. Keep virtual access, exclude explicitly remote venues.
     if kind != "online" and (
         (state and state.casefold() not in {"ga", "georgia"})
         or city.casefold() in {"athens", "augusta", "columbus", "macon", "savannah", "valdosta"}
     ):
         return None
-    audience = ["TAG members"] if re.search(r"\bmembers?[- ]only\b", title, re.I) else []
-    price_status: Literal["free", "paid", "conditional", "unknown"] = "unknown"
-    price_details = None
-    if match := re.search(
-        r"\bfree(?:[,\s]+(?:statewide|virtual|online)){0,2}\s+event\b|\bfree admission\b",
-        description,
-        re.I,
-    ):
-        price_status, price_details = "free", match[0]
-    elif match := re.search(
-        r"\b(?:tickets?|admission|registration)\s*(?:is |are |: )?\$\s*\d+(?:\.\d{2})?",
-        description,
-        re.I,
-    ):
-        price_status, price_details = "paid", match[0]
+    audience = ["TAG members"] if MEMBERS_ONLY.search(title) else []
+    price_status, price_details = described_price(description)
     cancelled = (
         str(event.get("STATUS", "")).upper() == "CANCELLED"
         or data.get("eventStatus") == "https://schema.org/EventCancelled"
-        or re.match(r"^[\s*\[\(]*(?:cancelled|canceled)\b", title, re.I) is not None
+        or CANCELLED_TITLE.match(title) is not None
     )
     all_day = not isinstance(start, datetime) or (
         str(event.get("X-MICROSOFT-CDO-ALLDAYEVENT", "")).upper() == "TRUE"

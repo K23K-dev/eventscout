@@ -4,7 +4,6 @@ import asyncio
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -14,8 +13,14 @@ from icalendar import Calendar
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import node_text as _text
-from app.ingestion.parsing import publisher_url
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    MEMBERS_ONLY,
+    cost_price,
+    location_kind,
+    publisher_url,
+)
+from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -139,28 +144,15 @@ def _parse(
     description_node = event.select_one(".gz-event-description")
     description = _text(description_node)
     venue = _text(event.select_one('[itemprop="location"] [itemprop="name"]'))
-    kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    if re.search(r"\bhybrid\b", venue, re.I):
-        kind = "hybrid"
-    elif re.search(r"\b(?:online|virtual|zoom|webinar)\b", venue, re.I):
-        kind = "online"
-    elif venue and not re.match(r"^(?:location:\s*)?(?:tbd|tba|to be announced)\b", venue, re.I):
-        kind = "in_person"
+    kind = location_kind(venue)
     if kind == "in_person" and re.search(
         r"\bWashington\s*,?\s+D\.?\s*C\.?\b|\bDistrict of Columbia\b", venue, re.I
     ):
         return None
-    fees_node = event.select_one(".gz-event-fees .gz-event-fees")
-    fees = _text(fees_node)
-    price: Literal["free", "paid", "conditional", "unknown"] = "unknown"
-    amounts = [float(amount) for amount in re.findall(r"\$\s*(\d+(?:\.\d{1,2})?)", fees)]
-    free = re.search(r"\b(?:free|no (?:charge|cost)|complimentary)\b", fees, re.I) is not None
-    if any(amount > 0 for amount in amounts):
-        price = "conditional" if free or 0 in amounts else "paid"
-    elif free or (amounts and all(amount == 0 for amount in amounts)):
-        price = "free"
+    fees = _text(event.select_one(".gz-event-fees .gz-event-fees"))
+    price, price_details = cost_price(fees)
     audience = []
-    if re.search(r"\bmembers?[- ]only\b", f"{title} {description} {fees}", re.I):
+    if MEMBERS_ONLY.search(f"{title} {description} {fees}"):
         audience.append(f"{publisher} members")
     if re.search(r"\bboard of directors\b|\bexecutive committee\b", title, re.I):
         audience.append("Board or executive committee members")
@@ -183,7 +175,7 @@ def _parse(
             "https://schema.org/EventCancelled",
             "http://schema.org/EventCancelled",
         }
-        or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+        or CANCELLED_TITLE.match(title)
     )
     return ParsedEvent(
         external_id=item.external_id,
@@ -201,7 +193,7 @@ def _parse(
             region="atlanta",
             audience=audience,
             price_status=price,
-            price_details=fees or None,
+            price_details=price_details,
             status="cancelled" if cancelled else "scheduled",
             source_url=HttpUrl(item.url),
             registration_url=HttpUrl(registration) if registration else None,

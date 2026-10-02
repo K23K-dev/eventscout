@@ -3,7 +3,6 @@
 import asyncio
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Literal
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -12,7 +11,15 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import http_url, issue_message, localize
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    described_price,
+    http_url,
+    issue_message,
+    localize,
+    location_kind,
+    text,
+)
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -50,18 +57,6 @@ def _local_time(day: str, clock: str) -> datetime:
     return localize(naive, _TIMEZONE).astimezone(UTC)
 
 
-def _location_kind(venue: str) -> Literal["in_person", "online", "hybrid", "unknown"]:
-    if not venue or venue.casefold() in {"tbd", "tba", "see description"}:
-        return "unknown"
-    if re.search(r"\bhybrid\b", venue, re.I):
-        return "hybrid"
-    if re.match(r"(?:online|virtual|zoom|microsoft teams)\b", venue, re.I):
-        return "online"
-    if re.search(r"\b(?:online|virtual|zoom)\b", venue, re.I):
-        return "unknown"
-    return "in_person"
-
-
 def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
     soup = BeautifulSoup(html, "html.parser")
     shortlink = _url(_href(soup.select_one('link[rel="shortlink"]')), library_only=True)
@@ -93,9 +88,7 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
     if body is None:
         raise ValueError("Missing Library event description")
     body_html = str(body)
-    for tag in body.select("script, style"):
-        tag.decompose()
-    description = " ".join(body.get_text(" ", strip=True).split())
+    description = text(body_html)
     detail_venue = _text(detail, ".taxonomy-box.location")
     venue = listing_venue or detail_venue
     if venue.casefold() == "in person":
@@ -103,19 +96,7 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
     register = detail.select_one("a.register-button")
     registration_url = _url(_href(register)) if register is not None else None
     category = _text(detail, ".node-detail__category")
-    price_status: Literal["free", "conditional", "unknown"] = "unknown"
-    price_details = None
-    if free := re.search(
-        r"\b(?:free (?:admission|entry|registration|workshop|event|webinar|seminar)|"
-        r"(?:admission|entry|registration|event|workshop|session|webinar|seminar) "
-        r"(?:is|will be) free)(?:\s+(?:for|to)\s+[^.!?]+)?",
-        description,
-        re.I,
-    ):
-        price_details = free.group(0)
-        price_status = (
-            "conditional" if re.search(r"\b(?:for|to)\b", price_details, re.I) else "free"
-        )
+    price_status, price_details = described_price(description)
     content = EventContent(
         title=title,
         description=description,
@@ -126,16 +107,14 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
         end_date=start_date + timedelta(days=1) if start_date is not None else None,
         timezone="America/New_York",
         venue=venue or None,
-        location_kind=_location_kind(venue or detail_venue),
+        location_kind=location_kind(venue or detail_venue),
         region="gt",
         price_status=price_status,
         price_details=price_details,
         tags=[category] if category else [],
         source_url=HttpUrl(url),
         registration_url=HttpUrl(registration_url) if registration_url else None,
-        status="cancelled"
-        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-        else "scheduled",
+        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         external_id=f"node:{node_id}",

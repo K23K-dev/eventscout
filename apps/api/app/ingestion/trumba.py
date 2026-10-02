@@ -4,7 +4,6 @@ import asyncio
 import re
 from datetime import UTC, date, datetime, time, timedelta
 from html import unescape
-from typing import Literal
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -12,7 +11,15 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import BaseModel, Field, HttpUrl, JsonValue, TypeAdapter, ValidationError
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import html_text, http_url, validation_message
+from app.ingestion.parsing import (
+    LocationKind,
+    PriceStatus,
+    cost_price,
+    described_price,
+    http_url,
+    validation_message,
+)
+from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -22,6 +29,11 @@ _TIMEZONE = ZoneInfo("America/New_York")
 # The published-events OpenAPI documents events=1..1000. Emory's default is only 200.
 _PAGE_LIMIT = 1000
 _JSON_EVENTS = TypeAdapter(list[dict[str, JsonValue]])
+_LOCATION_TYPES: dict[str, LocationKind] = {
+    "In-Person": "in_person",
+    "Online": "online",
+    "Hybrid": "hybrid",
+}
 
 
 class _CustomField(BaseModel):
@@ -44,10 +56,6 @@ class _Event(BaseModel):
     locationType: str = ""
     signUpUrl: str = ""
     customFields: list[_CustomField] = Field(default_factory=list)
-
-
-def _text(value: str) -> str:
-    return html_text(value, decode_entities=True)
 
 
 def _url(value: str) -> HttpUrl:
@@ -74,31 +82,14 @@ def _timestamp(value: str, offset: str) -> datetime:
     return aware.astimezone(UTC)
 
 
-def _price(
-    cost: str, payment_required: bool, description: str
-) -> tuple[Literal["free", "paid", "conditional", "unknown"], str | None]:
-    normalized = cost.casefold().strip(" .")
+def _price(cost: str, payment_required: bool, description: str) -> tuple[PriceStatus, str | None]:
     if payment_required:
         return "paid", cost or "Payment required by the registration provider"
-    if normalized in {"free", "no cost", "no charge", "$0", "$0.00", "0"}:
-        return "free", cost
-    if normalized:
-        if re.search(r"\bfree\b|\bvaries\b", normalized):
-            return "conditional", cost
-        if re.search(r"\$\s*\d|^\d+(?:\.\d{2})?$", normalized):
-            return "paid", cost
-        return "unknown", cost
-    if match := re.search(
-        r"\b(?:free (?:admission|entry|event|workshop|webinar)|"
-        r"(?:program|event|workshop|webinar|admission) (?:is|will be) free)"
-        r"(?:\s+for\s+[^.!?]+)?",
-        description,
-        re.I,
-    ):
-        evidence = match.group(0)
-        return ("conditional" if re.search(r"\bfor\b", evidence, re.I) else "free"), evidence
+    status, details = cost_price(cost)
+    if status != "unknown" or details:
+        return status, details
     # requiresPayment=false only describes Trumba registration, not event admission.
-    return "unknown", None
+    return described_price(description)
 
 
 def _parse_item(raw: dict[str, JsonValue], feed_url: str) -> ParsedEvent:
@@ -122,13 +113,6 @@ def _parse_item(raw: dict[str, JsonValue], feed_url: str) -> ParsedEvent:
         # Trumba's JSON end matches the exclusive DTEND;VALUE=DATE in its ICS feed.
         start_date, end_date = local_start.date(), local_end.date()
     registration = event.signUpUrl or fields.get("registration / r.s.v.p. link", "")
-    location_kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    if event.locationType == "In-Person":
-        location_kind = "in_person"
-    elif event.locationType == "Online":
-        location_kind = "online"
-    elif event.locationType == "Hybrid":
-        location_kind = "hybrid"
     price_status, price_details = _price(
         _text(fields.get("cost", "")), event.requiresPayment, description
     )
@@ -154,7 +138,7 @@ def _parse_item(raw: dict[str, JsonValue], feed_url: str) -> ParsedEvent:
         end_date=end_date,
         timezone=_TIMEZONE.key,
         venue=_text(event.location) or None,
-        location_kind=location_kind,
+        location_kind=_LOCATION_TYPES.get(event.locationType, "unknown"),
         region="atlanta",
         price_status=price_status,
         price_details=price_details,

@@ -7,7 +7,6 @@ from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from html import escape, unescape
-from typing import Literal
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
@@ -16,7 +15,17 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl, JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import html_text, http_url, validation_message
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    REGISTRATION,
+    PriceStatus,
+    cost_price,
+    described_price,
+    http_url,
+    location_kind,
+    text,
+    validation_message,
+)
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -148,7 +157,7 @@ def _decode(value: str) -> str:
 
 
 def _text(html: str) -> str:
-    return " ".join(_decode(html_text(html)).split())
+    return " ".join(_decode(text(html)).split())
 
 
 def _sections(html: str) -> tuple[str, dict[str, str]]:
@@ -262,13 +271,7 @@ def _registration_url(soup: BeautifulSoup, source_url: str, description: str) ->
         contextual_link = (
             generic_label
             and context is not None
-            and bool(
-                re.search(
-                    r"\b(register|registration|rsvp|tickets?|sign[ -]?up)\b",
-                    context.get_text(" "),
-                    re.I,
-                )
-            )
+            and bool(REGISTRATION.search(context.get_text(" ")))
         )
         previous = context.find_previous_sibling("p") if context is not None else None
         preceding_instruction = (
@@ -303,44 +306,14 @@ def _registration_url(soup: BeautifulSoup, source_url: str, description: str) ->
     )
 
 
-def _price(
-    fee: str, tags: list[str], description: str
-) -> tuple[Literal["free", "paid", "conditional", "unknown"], str | None]:
-    value = fee.casefold().strip(" .")
-    if value in {"free", "no cost", "no fee", "there is no fee", "$0", "$0.00", "0", "0.00"}:
-        return "free", fee
-    if value and value not in {"n/a", "na", "unknown", "tbd"}:
-        if re.search(r"\bfree\b|\bvaries\b", value):
-            return "conditional", fee
-        if re.search(r"\$\s*\d|^\d+(?:\.\d{2})?$", value):
-            return "paid", fee
-        # Instructions to visit a registration page do not establish a price.
-        return "unknown", fee
+def _price(fee: str, tags: list[str], description: str) -> tuple[PriceStatus, str | None]:
+    # A published fee decides, even when it only points to a registration page.
+    status, details = cost_price(fee)
+    if status != "unknown" or details:
+        return status, details
     if "free" in {tag.casefold() for tag in tags}:
         return "free", "Listed as Free by Georgia Tech"
-    if match := re.search(
-        r"\b(?:free (?:admission|entry|registration|workshop|event|webinar|seminar)|"
-        r"(?:admission|entry|registration|event|workshop|session|webinar|conference|seminar)"
-        r" (?:is|will be) free)"
-        r"(?:\s+for\s+[^.!?]+)?",
-        description,
-        re.IGNORECASE,
-    ):
-        evidence = match.group(0)
-        return ("conditional" if re.search(r"\bfor\b", evidence, re.I) else "free"), evidence
-    return "unknown", None
-
-
-def _location_kind(venue: str | None) -> Literal["in_person", "online", "hybrid", "unknown"]:
-    if not venue or venue.casefold() in {"n/a", "tbd", "tba", "related link", "see description"}:
-        return "unknown"
-    if re.search(r"\bhybrid\b", venue, re.I):
-        return "hybrid"
-    if re.match(r"(?:online|virtual|zoom|webinar|microsoft teams)\b", venue, re.I):
-        return "online"
-    if re.search(r"\b(online|virtual|zoom)\b", venue, re.I):
-        return "unknown"
-    return "in_person"
+    return described_price(description)
 
 
 def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
@@ -368,7 +341,7 @@ def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
         start_date=start_date,
         end_date=end_date,
         venue=venue,
-        location_kind=_location_kind(venue),
+        location_kind=location_kind(venue),
         region="gt",
         price_status=price_status,
         price_details=price_details,
@@ -376,9 +349,7 @@ def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
         tags=tags,
         source_url=source_url,
         registration_url=_registration_url(soup, str(source_url), description),
-        status="cancelled"
-        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-        else "scheduled",
+        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         external_id=external_id,

@@ -3,7 +3,6 @@
 import asyncio
 import re
 from datetime import UTC, datetime
-from typing import Literal
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -12,8 +11,15 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import http_url, issue_message, localize
-from app.ingestion.parsing import node_text as _text
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    cost_price,
+    http_url,
+    issue_message,
+    localize,
+    registration_link,
+)
+from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -59,12 +65,7 @@ def _earl_event(card: Tag) -> ParsedEvent:
     support = [_text(tag) for tag in card.select(".show-listing-support") if _text(tag)]
     prices = [_text(tag) for tag in card.select(".show-listing-price") if _text(tag)]
     free = _text(card.select_one(".listing-free-show-contain"))
-    cost = " | ".join(prices) or free or None
-    price_status: Literal["free", "paid", "unknown"] = "unknown"
-    if free and re.search(r"\bfree\b", free, re.I):
-        price_status = "free"
-    elif prices and re.search(r"\$\s*\d", " ".join(prices)):
-        price_status = "paid"
+    price_status, cost = cost_price(" | ".join(prices) or free)
     ticket = card.select_one(".cl-element-custom_field.show-btn a")
     registration = _url(ticket.get("href"), _EARL) if ticket else None
     description = ". ".join(
@@ -87,9 +88,7 @@ def _earl_event(card: Tag) -> ParsedEvent:
         tags=["Music"],
         source_url=source_url,
         registration_url=registration,
-        status="cancelled"
-        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-        else "scheduled",
+        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         external_id=identifiers[0],
@@ -183,22 +182,11 @@ def _fernbank_event(html: bytes, url: str, card: Tag) -> ParsedEvent:
         ),
         None,
     )
-    price_status: Literal["free", "paid", "conditional", "unknown"] = "unknown"
-    if cost:
-        if re.search(r"\b(?:members?|included with|donation)\b", cost, re.I):
-            price_status = "conditional"
-        elif re.fullmatch(r"cost:\s*free[.!]?", cost, re.I):
-            price_status = "free"
-        elif re.search(r"\$\s*\d", cost):
-            price_status = "paid"
+    price_status, price_details = cost_price(cost)
     audience = [
         text for text in paragraphs if re.match(r"(?:recommended for|ages?\b|for ages)", text, re.I)
     ]
-    registration = None
-    for anchor in article.select("a[href]"):
-        if re.search(r"\b(?:tickets?|register|registration|rsvp)\b", _text(anchor), re.I):
-            registration = _url(anchor.get("href"), url)
-            break
+    registration = registration_link(article, url)
     location = "" if listing_only else _text(article.select_one("h5"))
     return ParsedEvent(
         external_id=urlsplit(url).path.rstrip("/"),
@@ -215,14 +203,12 @@ def _fernbank_event(html: bytes, url: str, card: Tag) -> ParsedEvent:
             location_kind="in_person",
             region="atlanta",
             price_status=price_status,
-            price_details=cost,
+            price_details=price_details,
             audience=audience,
             tags=["Museum"],
             source_url=HttpUrl(url),
-            registration_url=registration,
-            status="cancelled"
-            if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-            else "scheduled",
+            registration_url=HttpUrl(registration) if registration else None,
+            status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
         ),
         source_updated_at=None,
         raw_payload={

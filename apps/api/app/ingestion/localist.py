@@ -7,7 +7,6 @@ fetch it once, filter locally, and report the cap instead of implying full cover
 
 import re
 from datetime import datetime, timedelta
-from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -22,6 +21,7 @@ from app.ingestion.icalendar_feed import (
     calendar_text,
     parse_calendar_events,
 )
+from app.ingestion.parsing import CANCELLED_TITLE, location_kind
 from app.ingestion.records import ParsedEvent, ParsedFeed, SourceCollection
 from app.storage.models import EventContent
 
@@ -42,18 +42,6 @@ _BARE_OBSERVANCES = {
     "diwali",
     "feast of the immaculate conception",
 }
-
-
-def _location_kind(venue: str) -> Literal["in_person", "online", "hybrid", "unknown"]:
-    if not venue or venue.casefold() in {"tba", "tbd", "see description"}:
-        return "unknown"
-    if re.search(r"\bhybrid\b", venue, re.I):
-        return "hybrid"
-    if re.fullmatch(r"(?:online|virtual|zoom|webinar|microsoft teams)", venue, re.I):
-        return "online"
-    if re.search(r"\b(?:online|virtual|zoom)\b", venue, re.I):
-        return "unknown"
-    return "in_person"
 
 
 def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
@@ -102,12 +90,12 @@ def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
         else None,
         timezone="America/New_York",
         venue=venue or None,
-        location_kind=_location_kind(venue),
+        location_kind=location_kind(venue),
         region="atlanta",
         tags=tags,
         source_url=HttpUrl(url),
         status="cancelled"
-        if status == "CANCELLED" or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+        if status == "CANCELLED" or CANCELLED_TITLE.match(title)
         else "scheduled",
     )
     raw_tags: list[JsonValue] = list(tags)

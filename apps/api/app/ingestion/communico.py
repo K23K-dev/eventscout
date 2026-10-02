@@ -15,7 +15,7 @@ from pydantic import JsonValue
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.icalendar_feed import _parse_event, parse_feed
-from app.ingestion.parsing import html_text, localize
+from app.ingestion.parsing import localize, text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 
 CALENDARS = {
@@ -43,15 +43,15 @@ def parse_detail(data: bytes, url: str) -> ParsedEvent:
         raise ValueError("Missing stable library event ID")
     event = Event()
     event.add("uid", identity)
-    event.add("summary", html_text(schema["name"], decode_entities=True))
-    event.add("description", html_text(schema.get("description", ""), decode_entities=True))
+    event.add("summary", text(schema["name"]))
+    event.add("description", text(schema.get("description", "")))
     for field, property_name in (("startDate", "dtstart"), ("endDate", "dtend")):
         value = datetime.fromisoformat(schema[field])
         if value.tzinfo is None:
             value = localize(value, ZoneInfo("America/New_York"))
         event.add(property_name, value)
     location = schema.get("location", {})
-    event.add("location", html_text(location.get("name", ""), decode_entities=True))
+    event.add("location", text(location.get("name", "")))
     event.add("url", url)
     event.add(
         "status",

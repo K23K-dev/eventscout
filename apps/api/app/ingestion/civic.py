@@ -5,15 +5,21 @@ import re
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
-from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from icalendar import Calendar, Component
 from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    cost_price,
+    location_kind,
+    registration_link,
+)
+from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
 from app.storage.models import EventContent
 
@@ -23,16 +29,6 @@ CALENDARS: dict[City, tuple[str, int]] = {
     "lilburn": ("https://www.cityoflilburn.com", 25),
     "lawrenceville": ("https://www.lawrencevillega.org", 22),
 }
-
-
-def _text(value: str | Tag | None) -> str:
-    if isinstance(value, str):
-        value = BeautifulSoup(value, "html.parser")
-    if value is None:
-        return ""
-    for node in value.select("script, style"):
-        node.decompose()
-    return " ".join(value.get_text(" ", strip=True).split())
 
 
 def _parse(event: Component, base: str, feed_url: str) -> ParsedEvent:
@@ -97,8 +93,7 @@ def _parse(event: Component, base: str, feed_url: str) -> ParsedEvent:
             tags=["Community"],
             source_url=HttpUrl(detail_url),
             status="cancelled"
-            if str(event.get("STATUS", "")).upper() == "CANCELLED"
-            or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+            if str(event.get("STATUS", "")).upper() == "CANCELLED" or CANCELLED_TITLE.match(title)
             else "scheduled",
         ),
         source_updated_at=updated,
@@ -142,27 +137,10 @@ def _detail(html: bytes, event: ParsedEvent) -> ParsedEvent:
     venue_node = scope.select_one('[itemprop="location"] [itemprop="name"]')
     address_node = scope.select_one('[itemprop="location"] [itemprop="address"]')
     venue = ", ".join(part for part in (_text(venue_node), _text(address_node)) if part)
-    kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    if re.search(r"\bhybrid\b", venue, re.I):
-        kind = "hybrid"
-    elif re.search(r"\b(?:online|virtual|zoom)\b", venue, re.I):
-        kind = "online"
-    elif venue:
-        kind = "in_person"
-    registration = None
-    for link in scope.select("a[href]"):
-        if re.search(r"\b(?:register|registration|tickets|rsvp)\b", _text(link), re.I):
-            target = urljoin(str(event.content.source_url), str(link.get("href")))
-            if urlsplit(target).scheme in {"https", "http"}:
-                registration = HttpUrl(target)
-                break
-    cost_node = scope.select_one('.specificDetail[id$="_cost"] .specificDetailItem')
-    cost = _text(cost_node) or None
-    price_status: Literal["free", "paid", "conditional", "unknown"] = "unknown"
-    if cost and re.fullmatch(r"free[.!]?|\$?0(?:\.00)?", cost, re.I):
-        price_status = "free"
-    elif cost and re.search(r"\$\s*\d", cost):
-        price_status = "conditional" if re.search(r"free|donation", cost, re.I) else "paid"
+    registration = registration_link(scope, str(event.content.source_url))
+    price_status, cost = cost_price(
+        _text(scope.select_one('.specificDetail[id$="_cost"] .specificDetailItem'))
+    )
     return replace(
         event,
         content=EventContent.model_validate(
@@ -171,7 +149,7 @@ def _detail(html: bytes, event: ParsedEvent) -> ParsedEvent:
                 "description": description or event.content.description,
                 "ends_at": ends_at,
                 "venue": venue or event.content.venue,
-                "location_kind": kind,
+                "location_kind": location_kind(venue),
                 "registration_url": registration,
                 "price_status": price_status,
                 "price_details": cost,

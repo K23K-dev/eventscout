@@ -42,24 +42,15 @@ class CalendarSource:
     config: SourceInput
     priority: int
     collect: Collector
-    enabled: bool = True
 
 
 def _source(
-    slug: str,
-    publisher: str,
-    name: str,
-    url: str,
-    priority: int,
-    collect: Collector,
-    *,
-    enabled: bool = True,
+    slug: str, publisher: str, name: str, url: str, priority: int, collect: Collector
 ) -> CalendarSource:
     return CalendarSource(
         SourceInput(slug=slug, publisher=publisher, name=name, url=HttpUrl(url)),
         priority,
         collect,
-        enabled,
     )
 
 
@@ -180,20 +171,6 @@ SOURCES = {
             partial(
                 tribe.collect, api_url="https://piedmontpark.org/wp-json/tribe/events/v1/events"
             ),
-        ),
-        _source(
-            "tech-north-atlanta",
-            "Tech North Atlanta",
-            "Tech North Atlanta Events",
-            "https://technorthatlanta.org/events/",
-            13,
-            partial(
-                tribe.collect,
-                api_url="https://technorthatlanta.org/wp-json/tribe/events/v1/events",
-                crawl_delay=30,
-                overlap_filters=False,
-            ),
-            enabled=False,
         ),
         _source(
             "atlanta-tech-village",

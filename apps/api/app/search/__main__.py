@@ -88,7 +88,7 @@ def _filters(options: dict[str, Any]) -> EventFilters:
 
 async def _run(settings: Settings, checks: list[tuple[str, EventFilters]]) -> None:
     assert settings.openai_api_key is not None and settings.pinecone_api_key is not None
-    enabled = tuple(slug for slug, source in SOURCES.items() if source.enabled)
+    enabled = tuple(SOURCES)
     async with (
         connect_database(settings) as connection,
         AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value()) as openai,

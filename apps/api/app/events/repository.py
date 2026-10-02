@@ -17,11 +17,7 @@ _SOURCE_DETAILS = sql.SQL("""
     JOIN LATERAL (
         SELECT max(r.observed_at) AS last_observed_at,
                jsonb_agg(jsonb_build_object(
-                   'slug', s.slug, 'publisher', s.publisher, 'name', s.name,
-                   'url', s.url, 'last_observed_at', r.observed_at,
-                   'last_attempt_at', s.last_attempt_at, 'last_success_at', s.last_success_at,
-                   'health', s.health_status,
-                   'coverage_warnings', COALESCE(s.coverage->'warnings', '[]'::jsonb)
+                   'slug', s.slug, 'publisher', s.publisher, 'name', s.name, 'url', s.url
                ) ORDER BY s.slug) AS sources
         FROM (
             SELECT source_id, max(observed_at) AS observed_at

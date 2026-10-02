@@ -5,7 +5,6 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Literal
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -13,7 +12,13 @@ from icalendar import Calendar, Event
 from pydantic import JsonValue, ValidationError
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import html_text, http_url, validation_message
+from app.ingestion.parsing import (
+    CANCELLED_TITLE,
+    http_url,
+    location_kind,
+    text,
+    validation_message,
+)
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -126,15 +131,10 @@ def _parse_event(
     title = calendar_text(event, "SUMMARY")
     description = calendar_text(event, "DESCRIPTION")
     if re.search(r"</?(?:p|div|br|span|a|script|style)(?:\s|>|/)", description, re.I):
-        description = html_text(description)
+        description = text(description)
     venue = calendar_text(event, "LOCATION").strip(" -")
     if re.search(r"\bsign in\b|^tbd$|^tba$|^see (?:the )?website$", venue, re.I):
         venue = ""
-    location_kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    if venue:
-        location_kind = (
-            "online" if re.match(r"^(?:online|virtual|zoom)\b", venue, re.I) else "in_person"
-        )
     tags = calendar_categories(event)
     raw_tags: list[JsonValue] = list(tags)
     status = calendar_text(event, "STATUS").upper()
@@ -151,12 +151,12 @@ def _parse_event(
         end_date=(ends or starts + timedelta(days=1)) if all_day else None,
         timezone="America/New_York",
         venue=venue or None,
-        location_kind=location_kind,
+        location_kind=location_kind(venue),
         region="atlanta",
         tags=tags,
         source_url=http_url(link),
         status="cancelled"
-        if status == "CANCELLED" or re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
+        if status == "CANCELLED" or CANCELLED_TITLE.match(title)
         else "scheduled",
     )
     return ParsedEvent(

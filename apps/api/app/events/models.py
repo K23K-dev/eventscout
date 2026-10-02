@@ -95,11 +95,7 @@ class EventFilters(BaseModel):
 
 
 class EventSource(SourceInput):
-    last_observed_at: AwareDatetime
-    last_attempt_at: AwareDatetime | None = None
-    last_success_at: AwareDatetime | None = None
-    health: Literal["healthy", "partial", "failed", "unknown"] = "unknown"
-    coverage_warnings: list[str] = Field(default_factory=list)
+    """A public calendar that lists the event."""
 
 
 class EventResponse(EventContent):

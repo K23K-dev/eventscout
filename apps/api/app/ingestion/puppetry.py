@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl, JsonValue
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import localize, node_text
+from app.ingestion.parsing import CANCELLED_TITLE, localize, text
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -22,7 +22,7 @@ _ACTIVITIES = {"Puppet Shows", "Special Events", "Workshops & Classes"}
 
 
 def _text(parent: Tag, selector: str) -> str:
-    return node_text(parent.select_one(selector))
+    return text(parent.select_one(selector))
 
 
 def _link(card: Tag, selector: str) -> str:
@@ -64,9 +64,7 @@ def _performance(card: Tag, feed_url: str) -> ParsedEvent:
             tags=[category],
             source_url=HttpUrl(program),
             registration_url=HttpUrl(booking),
-            status="cancelled"
-            if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-            else "scheduled",
+            status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
         ),
         source_updated_at=None,
         raw_payload={

@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
+from app.ingestion.parsing import text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -17,8 +18,7 @@ FALCONS_URL = "https://www.atlantafalcons.com/schedule/"
 
 
 def _text(card: Tag, selector: str) -> str:
-    element = card.select_one(selector)
-    return element.get_text(" ", strip=True) if element is not None else ""
+    return text(card.select_one(selector))
 
 
 def _falcons_event(card: Tag) -> ParsedEvent:

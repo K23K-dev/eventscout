@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import localize
+from app.ingestion.parsing import CANCELLED_TITLE, localize, location_kind
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -68,12 +68,10 @@ def _tree_event(card: Tag, year: int, month: int, feed_url: str) -> ParsedEvent:
         ends_at=finishes,
         venue=venue,
         region="atlanta",
-        location_kind="online" if venue == "Virtual" else "in_person" if venue else "unknown",
+        location_kind=location_kind(venue),
         tags=tags,
         source_url=HttpUrl(url),
-        status="cancelled"
-        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-        else "scheduled",
+        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         identity[1],
@@ -153,12 +151,10 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
         ends_at=finishes if finishes > begins else None,
         venue=venue,
         region="atlanta",
-        location_kind="in_person" if venue else "unknown",
+        location_kind=location_kind(venue),
         tags=["outdoors", "community"],
         source_url=HttpUrl(url),
-        status="cancelled"
-        if re.match(r"^[\s*\[(]*(?:cancelled|canceled)\b", title, re.I)
-        else "scheduled",
+        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         urlsplit(url).path,

@@ -14,7 +14,7 @@ from app.settings import Settings
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings if settings is not None else Settings()
-    enabled_sources = tuple(slug for slug, source in SOURCES.items() if source.enabled)
+    enabled_sources = tuple(SOURCES)
     clients = AssistantClients(config)
 
     @asynccontextmanager
