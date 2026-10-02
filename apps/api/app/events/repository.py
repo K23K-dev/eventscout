@@ -29,6 +29,10 @@ _SOURCE_DETAILS = sql.SQL("""
         ) r JOIN eventscout.sources s ON s.id = r.source_id
         WHERE s.slug = ANY(%(enabled_sources)s)
     ) provenance ON provenance.last_observed_at IS NOT NULL
+    LEFT JOIN LATERAL (
+        SELECT summary, topics FROM eventscout.event_enrichments
+        WHERE content_hash = e.content_hash ORDER BY prompt_version DESC LIMIT 1
+    ) enrichment ON true
 """)
 _ENABLED_EVENT = sql.SQL("""
     EXISTS (
@@ -37,6 +41,10 @@ _ENABLED_EVENT = sql.SQL("""
         WHERE r.event_id = e.id AND s.slug = ANY(%(enabled_sources)s)
     )
 """)
+_DETAIL_COLUMNS = sql.SQL(
+    "provenance.last_observed_at, provenance.sources, "
+    "enrichment.summary, COALESCE(enrichment.topics, '{}') AS topics"
+)
 _START_TIME = sql.SQL("""
     CASE WHEN e.all_day THEN e.start_date::timestamp AT TIME ZONE e.timezone
          ELSE e.starts_at END
@@ -72,13 +80,28 @@ class EventRepository:
                 if filters.q and filters.sort == "relevance"
                 else sql.SQL("")
             )
+            # Soonest first means what starts in the window, then what was already running
+            # (months-long exhibitions would otherwise fill the first pages).
+            running_last = (
+                sql.SQL("({} < %(window_start)s) ASC, ").format(_START_TIME)
+                if filters.sort == "relevance"
+                else sql.SQL("")
+            )
             cursor = await self._connection.execute(
                 sql.SQL("""
-                    SELECT {}, provenance.last_observed_at, provenance.sources
+                    SELECT {}, {}
                     FROM eventscout.event_occurrences e {}
-                    WHERE {} ORDER BY {} {} ASC, e.id ASC
+                    WHERE {} ORDER BY {} {} {} ASC, e.id ASC
                     LIMIT %(limit)s OFFSET %(offset)s
-                """).format(_PUBLIC_COLUMNS, _SOURCE_DETAILS, where, rank, _START_TIME),
+                """).format(
+                    _PUBLIC_COLUMNS,
+                    _DETAIL_COLUMNS,
+                    _SOURCE_DETAILS,
+                    where,
+                    rank,
+                    running_last,
+                    _START_TIME,
+                ),
                 {**parameters, "limit": filters.page_size, "offset": offset},
             )
             items = [EventResponse.model_validate(row) for row in await cursor.fetchall()]
@@ -95,12 +118,12 @@ class EventRepository:
     async def get(self, event_id: UUID) -> EventResponse | None:
         cursor = await self._connection.execute(
             sql.SQL("""
-                SELECT {}, provenance.last_observed_at, provenance.sources
+                SELECT {}, {}
                 FROM eventscout.event_occurrences e {} WHERE e.id = (
                     SELECT COALESCE(merged_into, id) FROM eventscout.event_occurrences
                     WHERE id = %(id)s
                 )
-            """).format(_PUBLIC_COLUMNS, _SOURCE_DETAILS),
+            """).format(_PUBLIC_COLUMNS, _DETAIL_COLUMNS, _SOURCE_DETAILS),
             {"id": event_id, "enabled_sources": list(self._enabled_sources)},
         )
         row = await cursor.fetchone()
@@ -112,10 +135,10 @@ class EventRepository:
             return []
         cursor = await self._connection.execute(
             sql.SQL("""
-                SELECT {}, provenance.last_observed_at, provenance.sources
+                SELECT {}, {}
                 FROM eventscout.event_occurrences e {} WHERE e.id = ANY(%(ids)s)
                 ORDER BY array_position(%(ids)s::uuid[], e.id)
-            """).format(_PUBLIC_COLUMNS, _SOURCE_DETAILS),
+            """).format(_PUBLIC_COLUMNS, _DETAIL_COLUMNS, _SOURCE_DETAILS),
             {"ids": event_ids, "enabled_sources": list(self._enabled_sources)},
         )
         return [EventResponse.model_validate(row) for row in await cursor.fetchall()]
@@ -127,9 +150,9 @@ class EventRepository:
         where, parameters = self._search_conditions(filters.model_copy(update={"q": None}))
         cursor = await self._connection.execute(
             sql.SQL("""
-                SELECT {}, provenance.last_observed_at, provenance.sources
+                SELECT {}, {}
                 FROM eventscout.event_occurrences e {} WHERE e.id = ANY(%(ids)s) AND {}
-            """).format(_PUBLIC_COLUMNS, _SOURCE_DETAILS, where),
+            """).format(_PUBLIC_COLUMNS, _DETAIL_COLUMNS, _SOURCE_DETAILS, where),
             {**parameters, "ids": event_ids},
         )
         return [EventResponse.model_validate(row) for row in await cursor.fetchall()]
@@ -165,6 +188,15 @@ class EventRepository:
                 clauses.append(
                     sql.SQL("{} = {}").format(sql.Identifier("e", name), sql.Placeholder(name))
                 )
+        if filters.topic:
+            parameters["topic"] = filters.topic
+            clauses.append(
+                sql.SQL("""
+                    (SELECT topics FROM eventscout.event_enrichments
+                     WHERE content_hash = e.content_hash ORDER BY prompt_version DESC LIMIT 1)
+                    @> ARRAY[%(topic)s]::text[]
+                """)
+            )
         if filters.venue:
             parameters["venue"] = filters.venue
             clauses.append(sql.SQL("strpos(lower(e.venue), lower(%(venue)s)) > 0"))

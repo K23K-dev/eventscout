@@ -1,67 +1,85 @@
+import { SlidersHorizontal } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { addDays, dateWindow } from '../events'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
-const control = 'mt-2 min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm text-ink'
+const keys = ['region', 'price_status', 'location_kind', 'venue', 'audience'] as const
+type Values = Record<(typeof keys)[number], string>
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="block text-xs font-semibold text-muted">{label}{children}</label>
+// Select items can't have an empty value, so "any" stands for no filter.
+const choices = {
+  region: [['any', 'Everywhere'], ['gt', 'Georgia Tech'], ['atlanta', 'Atlanta area']],
+  price_status: [['any', 'Any price'], ['free', 'Free'], ['paid', 'Paid'], ['conditional', 'Price varies'], ['unknown', 'Not listed']],
+  location_kind: [['any', 'In person or online'], ['in_person', 'In person'], ['online', 'Online'], ['hybrid', 'Hybrid'], ['unknown', 'Not listed']],
+} as const
+
+function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">{label}</Label>
+      {children}
+    </div>
+  )
 }
 
+/** Everything beyond the quick toggles: area, price, format, venue, and audience. */
 export function Filters({ params, apply }: { params: URLSearchParams; apply: (values: Record<string, string>) => void }) {
-  const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
-  const { start, end } = dateWindow(params)
+  const [values, setValues] = useState<Values>(() => Object.fromEntries(keys.map(key => [key, params.get(key) ?? ''])) as Values)
+  const active = keys.filter(key => params.has(key)).length
+  const set = (key: keyof Values) => (value: string) => setValues(current => ({ ...current, [key]: value === 'any' ? '' : value }))
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const values = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>
-    const through = values.through!
-    const span = (Date.parse(through) - Date.parse(values.date_from!)) / 86_400_000
-    if (span < 0 || span > 89) {
-      setError('Choose an end date on or after the start, within 90 days.')
-      return
-    }
-    delete values.through
-    setError('')
-    apply({ ...values, date_to: addDays(through, 1) })
+    setOpen(false)
+    apply(values)
+  }
+
+  function reset() {
+    setOpen(false)
+    apply(Object.fromEntries(keys.map(key => [key, ''])))
   }
 
   return (
-    <aside className="self-start rounded-2xl border border-line bg-white lg:border-0 lg:bg-transparent" aria-label="Event filters">
-      <button className="flex min-h-12 w-full cursor-pointer items-center justify-between p-4 text-sm font-semibold lg:hidden" type="button" aria-expanded={open} aria-controls="event-filters" onClick={() => setOpen(!open)}>
-        Filter events <span aria-hidden="true">{open ? '−' : '+'}</span>
-      </button>
-      <h2 className="hidden pb-5 text-sm font-semibold lg:block">Filter events</h2>
-      <form id="event-filters" className={`${open ? 'block' : 'hidden'} space-y-5 px-4 pb-5 lg:block lg:px-0`} onSubmit={submit}>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
-          <Field label="From"><input className={control} name="date_from" type="date" defaultValue={start} min="1900-01-01" max="2100-01-01" required /></Field>
-          <Field label="Through"><input className={control} name="through" type="date" defaultValue={end} min="1900-01-01" max="2100-03-31" required /></Field>
-        </div>
-        <Field label="Area">
-          <select className={control} name="region" defaultValue={params.get('region') || ''}>
-            <option value="">All areas</option><option value="gt">Georgia Tech</option><option value="atlanta">Atlanta area</option>
-          </select>
-        </Field>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-1 lg:gap-5">
-          <Field label="Price">
-            <select className={control} name="price_status" defaultValue={params.get('price_status') || ''}>
-              <option value="">Any price</option><option value="free">Free</option><option value="paid">Paid</option><option value="conditional">Conditional pricing</option><option value="unknown">Not listed</option>
-            </select>
-          </Field>
-          <Field label="Format">
-            <select className={control} name="location_kind" defaultValue={params.get('location_kind') || ''}>
-              <option value="">Any format</option><option value="in_person">In person</option><option value="online">Online</option><option value="hybrid">Hybrid</option><option value="unknown">Not listed</option>
-            </select>
-          </Field>
-        </div>
-        <Field label="Venue"><input className={control} name="venue" defaultValue={params.get('venue') || ''} placeholder="e.g. Piedmont Park" maxLength={200} /></Field>
-        <Field label="Audience">
-          <input className={control} name="audience" defaultValue={params.get('audience') || ''} placeholder="e.g. Students" maxLength={100} aria-describedby="audience-hint" />
-        </Field>
-        <p id="audience-hint" className="-mt-3 text-[11px] leading-relaxed text-muted">Use an exact audience label from an event.</p>
-        {error && <p className="text-sm text-red-800" role="alert">{error}</p>}
-        <button className="min-h-11 w-full cursor-pointer rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-scout" type="submit">Apply filters</button>
-      </form>
-    </aside>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <SlidersHorizontal aria-hidden="true" /> Filters
+          {active > 0 && <Badge variant="secondary" className="h-5 min-w-5 justify-center px-1 tabular-nums">{active}</Badge>}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 p-0">
+        <form onSubmit={submit}>
+          <p className="border-b px-4 py-3 text-sm font-medium">Filters</p>
+          <div className="grid gap-4 p-4">
+            {(['region', 'price_status', 'location_kind'] as const).map(key => (
+              <Field key={key} id={`filter-${key}`} label={{ region: 'Area', price_status: 'Price', location_kind: 'Format' }[key]}>
+                <Select value={values[key] || 'any'} onValueChange={set(key)}>
+                  <SelectTrigger id={`filter-${key}`} size="sm" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {choices[key].map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Field>
+            ))}
+            <Field id="filter-venue" label="Venue">
+              <Input id="filter-venue" className="h-8" value={values.venue} onChange={event => set('venue')(event.target.value)} placeholder="e.g. Piedmont Park" maxLength={200} />
+            </Field>
+            <Field id="filter-audience" label="Audience">
+              <Input id="filter-audience" className="h-8" value={values.audience} onChange={event => set('audience')(event.target.value)} placeholder="e.g. Students" maxLength={100} aria-describedby="audience-hint" />
+              <p id="audience-hint" className="text-xs text-muted-foreground">Matches an event’s exact audience label.</p>
+            </Field>
+          </div>
+          <div className="flex items-center justify-between border-t px-4 py-3">
+            <Button type="button" variant="ghost" size="sm" onClick={reset}>Reset</Button>
+            <Button type="submit" size="sm">Apply</Button>
+          </div>
+        </form>
+      </PopoverContent>
+    </Popover>
   )
 }

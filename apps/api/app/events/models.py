@@ -12,6 +12,34 @@ from app.storage.models import EventContent, SourceInput
 CATALOG_TIMEZONE = ZoneInfo("America/New_York")
 
 
+# The categories enrichment assigns, 1-3 per event.
+Topic = Literal[
+    "music",
+    "theater",
+    "dance",
+    "comedy",
+    "film",
+    "visual art",
+    "books and writing",
+    "talks and lectures",
+    "classes and workshops",
+    "technology",
+    "science",
+    "business and networking",
+    "careers",
+    "sports",
+    "fitness and wellness",
+    "outdoors and nature",
+    "volunteering",
+    "family and kids",
+    "food and drink",
+    "community and culture",
+    "faith",
+    "student life",
+    "health",
+]
+
+
 class EventFilters(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -47,6 +75,7 @@ class EventFilters(BaseModel):
             "Exact source-provided audience label, case-insensitive; no inferred eligibility."
         ),
     )
+    topic: Topic | None = Field(default=None, description="Only events enrichment tagged with it.")
     sort: Literal["relevance", "start_time"] = Field(
         default="relevance",
         description="Relevance uses keyword rank, then start time and event ID.",
@@ -83,6 +112,8 @@ class EventResponse(EventContent):
         default=None, description="Last verification by the source supplying the event details."
     )
     sources: list[EventSource]
+    summary: str | None = Field(default=None, description="One-line summary written by enrichment.")
+    topics: list[str] = Field(default_factory=list, description="1-3 enrichment Topic values.")
 
     @property
     def first_day(self) -> date | None:

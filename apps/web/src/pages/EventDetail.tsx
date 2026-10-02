@@ -1,15 +1,14 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { ArrowLeft, ArrowUpRight, CalendarDays, CalendarPlus, Download, Globe, Link2, MapPin, Ticket, Users, type LucideIcon } from 'lucide-react'
+import { createElement, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
+import { toast } from 'sonner'
 import { ApiError, fetchEvent, type Event } from '../api'
-import { checkedAt, eventDate, eventTime, locationLabels, priceLabels } from '../events'
-
-const sourceHealthLabels = {
-  healthy: 'Latest refresh succeeded',
-  partial: 'Some listings could not be refreshed',
-  failed: 'Latest refresh failed',
-  unknown: 'Refresh status unavailable',
-}
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { Skeleton } from '../components/ui/skeleton'
+import { calendarDate, calendarFile, checkedAt, eventDate, eventTime, formatDate, googleCalendarUrl, locationLabels, priceLabels, span, timeRange, today } from '../events'
+import { topics } from '../topics'
 
 export function EventDetail() {
   const { eventId = '' } = useParams()
@@ -23,38 +22,30 @@ export function EventDetail() {
   const notFound = query.error instanceof ApiError && [404, 422].includes(query.error.status)
 
   return (
-    <main id="main" tabIndex={-1} className="flex-1 py-9 focus:outline-none sm:py-14">
-      <Link to={backTo} className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-scout hover:underline">
-        <span aria-hidden="true">←</span> {backTo.startsWith('/ask') ? 'Back to chat' : 'Back to events'}
-      </Link>
+    <main id="main" tabIndex={-1} className="mx-auto w-full max-w-5xl flex-1 py-6 focus:outline-none sm:py-8">
+      <Button variant="ghost" size="sm" asChild className="-ml-2.5 text-muted-foreground">
+        <Link to={backTo}><ArrowLeft aria-hidden="true" /> {backTo.startsWith('/ask') ? 'Back to chat' : 'Back to events'}</Link>
+      </Button>
 
       {query.isPending ? (
-        <section className="mt-8 rounded-2xl border border-line bg-white p-8 sm:p-12" aria-busy="true">
+        <section className="mt-6 space-y-4" aria-busy="true">
           <title>Loading event · EventScout</title>
-          <p role="status" className="text-muted">Getting the details…</p>
-          <div className="mt-6 h-10 w-3/4 rounded bg-paper" aria-hidden="true" />
-          <div className="mt-4 h-5 w-1/2 rounded bg-paper" aria-hidden="true" />
+          <p role="status" className="sr-only">Getting the details…</p>
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-10 w-3/4" />
+          <Skeleton className="h-5 w-1/2" />
         </section>
       ) : query.isError ? (
-        <section className="mt-8 rounded-2xl border border-line bg-white p-8 sm:p-12">
+        <section className="mt-6 rounded-lg border bg-card p-6">
           <title>{`${notFound ? 'Event not found' : 'Event unavailable'} · EventScout`}</title>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">
-            {notFound ? 'This event couldn’t be found.' : 'The details aren’t loading.'}
-          </h1>
-          <p className="mt-3 max-w-lg leading-7 text-muted" role="alert">
-            {notFound
-              ? 'The link may be incorrect, or this event may no longer be in the catalog.'
-              : 'We couldn’t reach the event catalog. Give it another try in a moment.'}
+          <h1 className="text-lg font-semibold">{notFound ? 'This event couldn’t be found.' : 'The details aren’t loading.'}</h1>
+          <p className="mt-1 max-w-lg text-sm text-muted-foreground" role="alert">
+            {notFound ? 'The link may be incorrect, or this event may no longer be in the catalog.' : 'We couldn’t reach the event catalog. Give it another try in a moment.'}
           </p>
           {!notFound && (
-            <button
-              type="button"
-              className="mt-6 min-h-11 cursor-pointer rounded-lg bg-scout px-5 py-2.5 text-sm font-semibold text-white hover:bg-ink disabled:cursor-wait disabled:opacity-60"
-              disabled={query.isFetching}
-              onClick={() => { void query.refetch() }}
-            >
+            <Button variant="outline" size="sm" className="mt-4" disabled={query.isFetching} onClick={() => { void query.refetch() }}>
               {query.isFetching ? 'Trying again…' : 'Try again'}
-            </button>
+            </Button>
           )}
         </section>
       ) : (
@@ -66,133 +57,153 @@ export function EventDetail() {
 
 function EventInformation({ event }: { event: Event }) {
   const [now] = useState(Date.now)
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
   const ended = event.all_day
-    ? (event.end_date ? event.end_date <= today : (event.start_date ?? today) < today)
+    ? (event.end_date ? event.end_date <= day : (event.start_date ?? day) < day)
     : Boolean(event.ends_at && Date.parse(event.ends_at) <= now)
   const started = !event.all_day && !event.ends_at && Boolean(event.starts_at && Date.parse(event.starts_at) <= now)
   const cancelled = event.status === 'cancelled'
+  const { start, end, multipleDays } = span(event)
+  const ongoing = !!(start && end && calendarDate(start) < today() && !ended)
+  const sheet = start && (ongoing ? end : start)
+  const google = !ended && !cancelled ? googleCalendarUrl(event) : null
+  const action = ended ? 'View original event' : event.registration_url ? 'Get tickets' : 'Go to event page'
+
+  function download() {
+    const file = calendarFile(event)
+    if (!file) return
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(file)
+    link.download = `${event.title.replace(/[^\w -]+/g, '').trim().slice(0, 60) || 'event'}.ics`
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
+
+  async function share() {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      toast.success('Link copied')
+    } catch {
+      toast.error('Couldn’t copy the link.')
+    }
+  }
 
   return (
     <>
       <title>{`${event.title} · EventScout`}</title>
-      <header className="mt-7 max-w-4xl">
-        <p className="text-xs font-bold tracking-[0.14em] text-scout uppercase">
-          {event.region === 'gt' ? 'Georgia Tech' : 'Around Atlanta'}
-          <span className="px-2.5 text-line" aria-hidden="true">/</span>
-          {locationLabels[event.location_kind]}
-        </p>
-        <h1 className="mt-4 font-display text-4xl leading-[1.08] font-semibold tracking-[-0.035em] break-words sm:text-5xl lg:text-6xl">
-          {event.title}
-        </h1>
-        <p className="mt-4 text-xs leading-5 text-muted">
-          {event.last_verified_at ? `Checked ${checkedAt(event.last_verified_at)}` : 'These details haven’t been verified yet.'}
-        </p>
-      </header>
-
-      {(cancelled || ended || started) && (
-        <p className={`mt-7 rounded-xl border px-5 py-4 text-sm leading-6 ${cancelled ? 'border-red-200 bg-red-50 text-red-900' : 'border-line bg-white text-muted'}`}>
-          <strong className="font-semibold">{cancelled ? 'This event is cancelled.' : ended ? 'This event has ended.' : 'This event has already started.'}</strong>
-          {' '}{cancelled ? 'Check the organizer’s page for updates.' : 'Check the original listing for the latest information.'}
-        </p>
-      )}
-
-      {event.is_stale && (
-        <p className="mt-7 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-900">
-          <strong className="font-semibold">Needs a refresh.</strong> Check the organizer’s listing for the latest details.
-        </p>
-      )}
-
-      <div className="mt-8 grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_350px] lg:gap-12">
-        <aside aria-label="Plan your visit" className="rounded-2xl border border-line bg-white p-6 sm:p-7 lg:col-start-2 lg:row-start-1">
-          <dl className="space-y-6 text-sm">
-            <div>
-              <dt className="text-xs font-semibold tracking-wider text-muted uppercase">When</dt>
-              <dd className="mt-2 font-semibold leading-6">{eventDate(event)}</dd>
-              <dd className="mt-1 leading-6 text-muted">{eventTime(event)}</dd>
-              {!event.all_day && event.starts_at && <dd className="mt-1 text-xs text-muted">All times Eastern.</dd>}
-            </div>
-            <div>
-              <dt className="text-xs font-semibold tracking-wider text-muted uppercase">Where</dt>
-              <dd className="mt-2 leading-6 break-words">{event.venue || (event.location_kind === 'online' ? 'Online; see the organizer’s page for access.' : 'Venue not provided.')}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold tracking-wider text-muted uppercase">Admission</dt>
-              <dd className="mt-2 font-semibold">{priceLabels[event.price_status]}</dd>
-              {event.price_details && event.price_details.toLowerCase() !== priceLabels[event.price_status].toLowerCase() && <dd className="mt-1 leading-6 break-words whitespace-pre-line text-muted">{event.price_details}</dd>}
-              {event.price_status === 'unknown' && <dd className="mt-1 leading-6 text-muted">Check with the organizer for pricing.</dd>}
-            </div>
-            <div>
-              <dt className="text-xs font-semibold tracking-wider text-muted uppercase">Who can attend</dt>
-              <dd className="mt-2 leading-6">{event.audience.length ? event.audience.join(' · ') : 'Not specified; check with the organizer.'}</dd>
-            </div>
-          </dl>
-          {!cancelled && (
-            <a
-              className="mt-7 flex min-h-12 items-center justify-between gap-3 rounded-lg bg-scout px-4 py-3 text-sm font-semibold text-white hover:bg-ink"
-              href={ended ? event.source_url : event.registration_url || event.source_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {ended ? 'View original event' : event.registration_url ? 'Registration & tickets' : 'View event details'}
-              <span aria-hidden="true">↗</span>
-            </a>
+      <div className="mt-5 grid grid-cols-1 items-start gap-y-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-x-12">
+        <header className="min-w-0 lg:col-start-1 lg:row-start-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {event.topics.map(key => {
+              const topic = topics[key]
+              return topic && (
+                <Badge key={key} variant="outline" className="gap-1 font-normal text-muted-foreground">
+                  {createElement(topic.icon, { style: { color: topic.color }, 'aria-hidden': true })} {topic.label}
+                </Badge>
+              )
+            })}
+          </div>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight wrap-break-word sm:text-4xl">{event.title}</h1>
+          {event.summary && <p className="mt-3 max-w-2xl text-base text-muted-foreground sm:text-lg">{event.summary}</p>}
+          {(cancelled || ended || started) && (
+            <p className={`mt-5 rounded-lg border px-4 py-3 text-sm ${cancelled ? 'border-destructive/30 bg-destructive/10 text-red-300' : 'bg-card text-muted-foreground'}`}>
+              <span className="font-medium text-foreground">{cancelled ? 'This event is cancelled.' : ended ? 'This event has ended.' : 'This event has already started.'}</span>
+              {' '}{cancelled ? 'Check the organizer’s page for updates.' : 'Check the original listing for the latest information.'}
+            </p>
           )}
-          {(cancelled || event.registration_url) && (
-            <a className="mt-4 inline-flex min-h-11 items-center gap-2 text-sm text-scout underline underline-offset-4" href={event.source_url} target="_blank" rel="noreferrer">
-              Original listing <span aria-hidden="true">↗</span>
-            </a>
+          {event.is_stale && (
+            <p className="mt-5 rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+              <span className="font-medium">Needs a refresh.</span> Check the organizer’s listing for the latest details.
+            </p>
           )}
-          <p className="mt-5 border-t border-line pt-4 text-xs leading-5 text-muted">
-            Details can change. Confirm the time, access requirements, and availability before heading out.
-          </p>
+        </header>
+
+        <aside aria-label="Plan your visit" className="lg:sticky lg:top-20 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+          <div className="rounded-lg border bg-card p-4">
+            <div className="flex items-center gap-3">
+              {sheet && (
+                <div className="w-11 shrink-0 overflow-hidden rounded-md border text-center" aria-hidden="true">
+                  <p className="border-b bg-secondary py-px text-[10px] font-medium text-muted-foreground uppercase">{ongoing ? 'Until' : formatDate(sheet, { month: 'short' })}</p>
+                  <p className="py-0.5 text-lg font-semibold tabular-nums">{formatDate(sheet, { day: 'numeric' })}</p>
+                </div>
+              )}
+              <div className="min-w-0 text-sm">
+                <p className="font-medium">{!start ? 'Date to be announced' : ongoing ? `On now, until ${formatDate(end!, { month: 'long', day: 'numeric' })}` : multipleDays ? `${formatDate(start, { month: 'short', day: 'numeric' })} – ${formatDate(end!, { month: 'short', day: 'numeric' })}` : formatDate(start, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+                <p className="text-muted-foreground">{timeRange(event)} · {priceLabels[event.price_status]}</p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-2">
+              <Button asChild className="w-full">
+                <a href={cancelled || ended ? event.source_url : event.registration_url || event.source_url} target="_blank" rel="noreferrer">
+                  {cancelled ? 'Original listing' : action} <ArrowUpRight aria-hidden="true" />
+                </a>
+              </Button>
+              {google && (
+                <Button variant="outline" asChild className="w-full">
+                  <a href={google} target="_blank" rel="noreferrer"><CalendarPlus aria-hidden="true" /> Add to Google Calendar</a>
+                </Button>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                {google && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={download}><Download aria-hidden="true" /> .ics file</Button>}
+                <Button variant="ghost" size="sm" className="text-muted-foreground first:last:col-span-2" onClick={() => void share()}><Link2 aria-hidden="true" /> Copy link</Button>
+              </div>
+            </div>
+            <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">Details can change. Confirm the time and access before heading out.</p>
+          </div>
         </aside>
-        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
-          <section aria-labelledby="about-heading" className="border-t border-line pt-7">
-            <h2 id="about-heading" className="font-display text-2xl font-semibold tracking-tight">About the event</h2>
-            <p className="mt-4 text-[15px] leading-7 break-words whitespace-pre-line text-muted">
+
+        <div className="min-w-0 lg:col-start-1 lg:row-start-2">
+          <dl className="divide-y rounded-lg border bg-card text-sm">
+            <Detail icon={CalendarDays} label="When">
+              <p>{eventDate(event)}</p>
+              <p className="text-muted-foreground">{eventTime(event)}{!event.all_day && event.starts_at ? ' (Eastern)' : ''}</p>
+            </Detail>
+            <Detail icon={MapPin} label="Where">
+              <p className="wrap-break-word">{event.venue || (event.location_kind === 'online' ? 'Online; see the organizer’s page for access.' : 'Venue not provided')}</p>
+            </Detail>
+            <Detail icon={Globe} label="Format">
+              <p>{locationLabels[event.location_kind]} · {event.region === 'gt' ? 'Georgia Tech' : 'Atlanta area'}</p>
+            </Detail>
+            <Detail icon={Ticket} label="Admission">
+              <p>{priceLabels[event.price_status]}</p>
+              {event.price_details && event.price_details.toLowerCase() !== priceLabels[event.price_status].toLowerCase() && <p className="wrap-break-word whitespace-pre-line text-muted-foreground">{event.price_details}</p>}
+            </Detail>
+            <Detail icon={Users} label="Who can attend">
+              <p>{event.audience.length ? event.audience.join(' · ') : 'Not specified'}</p>
+            </Detail>
+          </dl>
+
+          <section aria-labelledby="about-heading" className="mt-8">
+            <h2 id="about-heading" className="text-base font-semibold">About this event</h2>
+            <p className="mt-2 text-sm leading-7 wrap-break-word whitespace-pre-line text-muted-foreground">
               {event.description || 'The organizer hasn’t provided a description. Visit the original listing for more details.'}
             </p>
-            {event.tags.length > 0 && (
-              <ul aria-label="Event topics" className="mt-6 flex flex-wrap gap-2">
-                {event.tags.map((tag) => <li key={tag} className="rounded-full border border-line px-3 py-1 text-xs text-muted">{tag}</li>)}
-              </ul>
-            )}
           </section>
 
-          <section aria-labelledby="sources-heading" className="mt-10 border-t border-line pt-6">
-            <h2 id="sources-heading" className="text-sm font-semibold">From the source</h2>
-            <ul className="mt-4 space-y-4">
-              {event.sources.map((source) => (
-                <li key={source.slug} className="text-sm">
-                  <a className="font-medium text-scout underline decoration-scout/30 underline-offset-4 hover:decoration-scout" href={source.url} target="_blank" rel="noreferrer">
-                    {source.name} <span aria-hidden="true">↗</span>
-                  </a>
-                  <p className="mt-1 text-xs leading-5 text-muted">
-                    {source.publisher} · Listing last seen {checkedAt(source.last_observed_at)}
-                  </p>
-                  <details className="mt-1 text-xs leading-5 text-muted">
-                    <summary className={`cursor-pointer ${['partial', 'failed'].includes(source.health) ? 'text-amber-900' : ''}`}>
-                      {sourceHealthLabels[source.health]}
-                    </summary>
-                    {source.last_attempt_at && <p className="mt-1">Last attempted {checkedAt(source.last_attempt_at)}</p>}
-                    {source.last_success_at && <p>Last successful refresh {checkedAt(source.last_success_at)}</p>}
-                    {source.coverage_warnings.length > 0 && (
-                      <ul className="mt-1 list-disc space-y-1 pl-4">
-                        {source.coverage_warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                      </ul>
-                    )}
-                  </details>
-                </li>
+          <p className="mt-8 border-t pt-4 text-xs text-muted-foreground">
+            {event.sources.length > 0 && <>Listed by{' '}
+              {event.sources.map((source, index) => (
+                <span key={source.slug}>
+                  {index > 0 && ', '}
+                  <a className="text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground" href={source.url} target="_blank" rel="noreferrer">{source.name}</a>
+                </span>
               ))}
-            </ul>
-            <p className="mt-5 text-xs leading-5 text-muted">
-              Checked means we verified the listing supplying these details. A source refresh may cover other listings, and doesn’t mean the organizer updated this event.
-            </p>
-          </section>
+              {' · '}</>}
+            {event.last_verified_at ? `Details checked ${checkedAt(event.last_verified_at)}` : 'These details haven’t been verified yet.'}
+          </p>
         </div>
-
       </div>
     </>
+  )
+}
+
+function Detail({ icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-3 px-4 py-3 sm:gap-4">
+      <dt className="flex w-32 shrink-0 items-center gap-2 self-start text-muted-foreground">
+        {createElement(icon, { className: 'size-4', 'aria-hidden': true })} {label}
+      </dt>
+      <dd className="min-w-0 flex-1">{children}</dd>
+    </div>
   )
 }

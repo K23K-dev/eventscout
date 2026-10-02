@@ -1,9 +1,13 @@
+import { Compass, LogOut, MessageCircle } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
 import { Link, NavLink, useLocation, useNavigationType } from 'react-router-dom'
+import { cn } from '@/lib/utils'
 import { signIn, signOut, useSession } from '../auth'
+import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar'
+import { Button, buttonVariants } from './ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
 
-const navLink = ({ isActive }: { isActive: boolean }) =>
-  `inline-flex min-h-10 items-center rounded-lg px-3 ${isActive ? 'bg-scout-soft text-scout' : 'text-muted hover:text-ink'}`
+const sections = [['/', 'Discover', Compass], ['/ask', 'Ask', MessageCircle]] as const
 
 export function PageShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
@@ -14,42 +18,65 @@ export function PageShell({ children }: { children: ReactNode }) {
     window.scrollTo(0, 0)
     document.getElementById('main')?.focus({ preventScroll: true })
   }, [pathname, navigationType])
+
   return (
-    <div className="mx-auto flex min-h-svh max-w-[1320px] flex-col px-5 sm:px-8 lg:px-12">
-      <a className="sr-only z-50 rounded bg-white p-3 focus:not-sr-only focus:absolute focus:top-3" href="#main">Skip to content</a>
-      <header className="flex items-center justify-between gap-4 border-b border-line py-6">
-        <Link className="inline-flex shrink-0 items-center gap-2.5 text-xl font-bold tracking-tight" to="/" aria-label="EventScout home">
-          <img className="size-9" src="/favicon.svg?v=2" alt="" width="36" height="36" />
-          <span>EventScout<span className="text-scout">.</span></span>
-        </Link>
-        <div className="flex items-center gap-1 text-sm font-semibold">
+    <div className="flex min-h-svh flex-col">
+      <a className="sr-only rounded-md border bg-card px-3 py-2 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50" href="#main">Skip to content</a>
+      <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-lg">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
+          <Link className="flex shrink-0 items-center gap-2 text-[15px] font-semibold tracking-tight" to="/" aria-label="EventScout home">
+            <img className="size-6" src="/favicon.svg?v=3" alt="" width="24" height="24" />
+            EventScout
+          </Link>
           <nav aria-label="Main" className="flex items-center gap-1">
-            {/* On phones the logo is the way back to browsing, leaving room to sign in. */}
-            <NavLink to="/" end className={state => `${navLink(state)} max-sm:hidden`}>Browse</NavLink>
-            <NavLink to="/ask" className={navLink}>Ask</NavLink>
+            {sections.map(([to, label, Icon]) => (
+              <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'px-2.5', isActive ? 'bg-accent text-foreground' : 'text-muted-foreground')}>
+                <Icon className="hidden sm:block" aria-hidden="true" /> {label}
+              </NavLink>
+            ))}
           </nav>
-          <Account />
+          <div className="ml-auto"><Account /></div>
         </div>
       </header>
-      {children}
-      <footer className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-line py-6 text-xs text-muted">
-        <span>Built around campus. Open to the city.</span>
-        <span>Times shown in Atlanta (Eastern).</span>
-      </footer>
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-6">{children}</div>
+      {!pathname.startsWith('/ask') && (
+        <footer className="border-t">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:px-6">
+            <span>Built around campus. Open to the city.</span>
+            <span>Times shown in Atlanta (Eastern).</span>
+          </div>
+        </footer>
+      )}
     </div>
   )
 }
 
 function Account() {
   const session = useSession()
-  if (session === undefined) return null
-  const button = 'ml-1 min-h-10 cursor-pointer rounded-lg border border-line bg-white px-3 whitespace-nowrap hover:border-scout hover:text-scout sm:ml-2'
-  if (!session) return <button type="button" className={button} onClick={() => void signIn()}>Sign in</button>
-  const name = session.user.user_metadata.full_name || session.user.email
+  if (session === undefined) return <div className="size-8" aria-hidden="true" />
+  if (!session) return <Button size="sm" onClick={() => void signIn()}>Sign in</Button>
+  const { email, user_metadata: profile } = session.user
+  const name: string = profile.full_name || email || 'Your account'
   return (
-    <>
-      <span className="ml-3 hidden max-w-48 truncate font-normal text-muted lg:inline" title={session.user.email}>{name}</span>
-      <button type="button" className={button} onClick={() => void signOut()}>Sign out</button>
-    </>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Account">
+          <Avatar className="size-8">
+            <AvatarImage src={profile.avatar_url} alt="" referrerPolicy="no-referrer" />
+            <AvatarFallback className="text-xs">{name.charAt(0).toUpperCase()}</AvatarFallback>
+          </Avatar>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel className="font-normal">
+          <p className="truncate text-sm font-medium">{name}</p>
+          {email && <p className="truncate text-xs text-muted-foreground">{email}</p>}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => void signOut()}>
+          <LogOut aria-hidden="true" /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

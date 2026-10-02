@@ -8,12 +8,13 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from openai import AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, Field
 
 from app.database import connect_database
+from app.events.models import Topic
 from app.indexing.worker import requeue
 from app.settings import Settings
 
@@ -22,31 +23,6 @@ logger = logging.getLogger(__name__)
 PROMPT_VERSION = 1
 _CHUNK = 40
 _CONCURRENCY = 8
-Topic = Literal[
-    "music",
-    "theater",
-    "dance",
-    "comedy",
-    "film",
-    "visual art",
-    "books and writing",
-    "talks and lectures",
-    "classes and workshops",
-    "technology",
-    "science",
-    "business and networking",
-    "careers",
-    "sports",
-    "fitness and wellness",
-    "outdoors and nature",
-    "volunteering",
-    "family and kids",
-    "food and drink",
-    "community and culture",
-    "faith",
-    "student life",
-    "health",
-]
 INSTRUCTIONS = """\
 You describe event listings from public calendars for a search index.
 

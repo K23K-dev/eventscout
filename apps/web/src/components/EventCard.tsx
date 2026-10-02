@@ -1,55 +1,96 @@
+import { MapPin } from 'lucide-react'
+import { createElement, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useState } from 'react'
+import { cn } from '@/lib/utils'
 import type { Event } from '../api'
-import { addDays, calendarDate, checkedAt, eventDate, eventTime, formatDate, locationLabels, priceLabels, today } from '../events'
+import { locationLabels, whenLabel } from '../events'
+import { topicOf } from '../topics'
+import { Badge } from './ui/badge'
 
-export function EventCard({ event, backTo }: { event: Event; backTo: string }) {
-  const [now] = useState(Date.now)
-  const start = event.all_day ? event.start_date : event.starts_at
-  const end = event.all_day && event.end_date ? addDays(event.end_date, -1) : event.ends_at
-  const multipleDays = !!(start && end && calendarDate(start) !== calendarDate(end))
-  const ongoing = !!(start && end && calendarDate(start) < today() && (event.all_day ? end >= today() : Date.parse(end) > now))
-  const ticketDate = ongoing ? end : start
+const priceTags: Partial<Record<Event['price_status'], string>> = { free: 'Free', paid: 'Paid', conditional: 'Varies' }
+
+export function PriceBadge({ event }: { event: Event }) {
+  const price = priceTags[event.price_status]
+  if (!price) return null
+  return <Badge variant="outline" className={event.price_status === 'free' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400' : 'text-muted-foreground'}>{price}</Badge>
+}
+
+/** The event's main category: a tinted icon with its name. */
+export function TopicBadge({ event }: { event: Event }) {
+  if (!event.topics.length) return null
+  const topic = topicOf(event)
   return (
-    <article className="group flex h-full min-w-0 flex-col rounded-2xl border border-line bg-white p-5 transition-colors hover:border-scout/50 sm:p-6">
-      <div className="mb-5 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex min-h-17 w-15 shrink-0 flex-col items-center justify-center rounded-xl bg-scout-soft text-scout" aria-label={eventDate(event)}>
-            <span className="text-[10px] font-bold tracking-widest uppercase">{ticketDate ? formatDate(ticketDate, { month: 'short' }) : 'Date'}</span>
-            <span className="font-display text-3xl leading-none font-semibold">{ticketDate ? formatDate(ticketDate, { day: 'numeric' }) : 'TBA'}</span>
-          </div>
-          <div className="text-xs leading-relaxed text-muted">
-            <p className="font-semibold text-ink">{ongoing ? 'On through' : ticketDate ? formatDate(ticketDate, { weekday: 'long' }) : 'To be announced'}</p>
-            <p>{multipleDays ? 'Multi-day event' : eventTime(event)}</p>
-          </div>
-        </div>
-        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${event.price_status === 'free' ? 'bg-scout-soft text-scout' : 'bg-paper text-muted'}`}>
-          {priceLabels[event.price_status]}
-        </span>
+    <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+      {createElement(topic.icon, { style: { color: topic.color }, 'aria-hidden': true })}
+      {topic.label}
+    </Badge>
+  )
+}
+
+/** A small tinted square with the category icon, standing in for a cover image. */
+export function TopicIcon({ event, className }: { event: Event; className?: string }) {
+  const topic = topicOf(event)
+  return (
+    <div className={cn('flex size-8 shrink-0 items-center justify-center rounded-md border', className)} style={{ backgroundColor: `${topic.color}14`, borderColor: `${topic.color}29`, color: topic.color }} aria-hidden="true">
+      {createElement(topic.icon, { className: 'size-4', strokeWidth: 1.75 })}
+    </div>
+  )
+}
+
+function Venue({ event }: { event: Event }) {
+  const source = event.sources[0]?.publisher
+  return (
+    <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <MapPin className="size-3 shrink-0" aria-hidden="true" />
+      <span className="truncate">{event.venue || locationLabels[event.location_kind]}{source && ` · ${source}`}</span>
+    </p>
+  )
+}
+
+/** One row in an event list; the whole row opens the event. Lists grouped by day pass no date. */
+export function EventRow({ event, backTo, showDate = false }: { event: Event; backTo: string; showDate?: boolean }) {
+  const [now] = useState(Date.now)
+  const price = priceTags[event.price_status]
+  const blurb = event.summary || event.description
+  return (
+    <article className="relative flex flex-col gap-1 px-4 py-3.5 transition-colors hover:bg-accent/40 has-[a:focus-visible]:bg-accent/40 sm:flex-row sm:gap-5">
+      <p className={cn('shrink-0 text-xs text-muted-foreground tabular-nums sm:pt-0.5 sm:text-sm', showDate ? 'sm:w-44' : 'sm:w-24')}>
+        {whenLabel(event, now, showDate)}
+        {price && <span className="sm:hidden"> · {price}</span>}
+      </p>
+      <div className="min-w-0 flex-1">
+        <h3 className="text-sm leading-5 font-medium">
+          <Link className="after:absolute after:inset-0 focus-visible:outline-none" to={`/events/${event.id}`} state={{ backTo }}>{event.title}</Link>
+        </h3>
+        {blurb && <p className="mt-0.5 line-clamp-1 text-sm text-muted-foreground">{blurb}</p>}
+        <div className="mt-1.5"><Venue event={event} /></div>
+        {event.is_stale && <p className="mt-1.5 text-xs text-amber-400">Details may be out of date</p>}
       </div>
-      <p className="mb-2 truncate text-[10px] font-semibold tracking-widest text-muted uppercase">{event.sources[0]?.publisher || (event.region === 'gt' ? 'Georgia Tech' : 'Atlanta')}</p>
-      <h3 className="text-lg leading-snug font-semibold tracking-tight">
-        <Link className="decoration-scout underline-offset-4 hover:text-scout hover:underline" to={`/events/${event.id}`} state={{ backTo }}>
-          {event.title}
-        </Link>
-      </h3>
-      {event.description && <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-muted">{event.description}</p>}
-      <div className="mt-5 flex-1 text-xs leading-relaxed text-muted">
-        <p>{event.venue || locationLabels[event.location_kind]}</p>
-        {event.location_kind === 'online' && event.venue && <p>Online</p>}
-        {event.location_kind === 'hybrid' && <p>In person & online</p>}
-        {multipleDays && <p className="mt-1">{eventDate(event)}</p>}
+      <div className="hidden shrink-0 items-start gap-1.5 sm:flex">
+        <TopicBadge event={event} />
+        <PriceBadge event={event} />
       </div>
-      <div className="mt-5 flex items-center justify-between gap-2 border-t border-line/70 pt-4 text-[11px] text-muted">
-        <span>{event.region === 'gt' ? 'Georgia Tech' : 'Atlanta area'}</span>
-        {event.is_stale ? (
-          <span className="rounded-full bg-amber-50 px-2 py-1 font-medium text-amber-900" title={event.last_verified_at ? `Last verified ${checkedAt(event.last_verified_at)}` : 'These details haven’t been verified yet.'}>
-            Needs a refresh
-          </span>
-        ) : event.last_verified_at ? (
-          <span title={checkedAt(event.last_verified_at)}>Checked {formatDate(event.last_verified_at)}</span>
-        ) : null}
+    </article>
+  )
+}
+
+/** A compact event card for chat answers, numbered to match the reply's citations. */
+export function EventCard({ event, backTo, number }: { event: Event; backTo: string; number?: number }) {
+  const [now] = useState(Date.now)
+  return (
+    <article className="relative flex min-w-0 items-start gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-accent/40 has-[a:focus-visible]:ring-[3px] has-[a:focus-visible]:ring-ring/50">
+      <TopicIcon event={event} />
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+          {number !== undefined && <span className="flex size-4 items-center justify-center rounded-sm bg-secondary text-[10px] font-semibold text-foreground">{number}</span>}
+          {whenLabel(event, now, true)}
+        </p>
+        <h3 className="mt-0.5 text-sm leading-5 font-medium">
+          <Link className="after:absolute after:inset-0 focus-visible:outline-none" to={`/events/${event.id}`} state={{ backTo }}>{event.title}</Link>
+        </h3>
+        <div className="mt-1"><Venue event={event} /></div>
       </div>
+      <PriceBadge event={event} />
     </article>
   )
 }

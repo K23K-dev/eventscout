@@ -27,6 +27,5 @@ __pycache__/
 Thumbs.db
 
 # Local planning notes and editor preferences
-/CONTEXT.md
 /docs/
 /.editorconfig

@@ -40,6 +40,8 @@ export interface Event {
   last_verified_at: string | null
   is_stale: boolean
   sources: EventSource[]
+  summary: string | null
+  topics: string[]
 }
 
 export interface EventPage {
