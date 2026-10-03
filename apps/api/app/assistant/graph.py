@@ -87,8 +87,7 @@ class Services:
     repository: EventRepository
     openai: AsyncOpenAI
     index: AsyncIndex
-    intent_model: str
-    answer_model: str
+    model: str
 
 
 @dataclass
@@ -100,7 +99,6 @@ class TurnResult:
     searched: bool
     broader: str | None
     note: str | None
-    intent: SearchIntent | None
 
 
 def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn]:
@@ -109,7 +107,7 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
         try:
             intent = await parse_intent(
                 services.openai,
-                services.intent_model,
+                services.model,
                 state["message"],
                 state.get("previous"),
                 shown,
@@ -156,7 +154,7 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
             await services.connection.execute(
                 "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
             )
-            results = await search_events(
+            evidence = await search_events(
                 services.repository,
                 services.openai,
                 services.index,
@@ -165,14 +163,14 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
                 keywords=broader or search.keyword_query(),
                 limit=CANDIDATES,
             )
-        return {"search": search, "evidence": results.hybrid, "searched": True}
+        return {"search": search, "evidence": evidence, "searched": True}
 
     async def explain(state: Turn) -> Turn:
         attempts = state.get("attempts", 0) + 1
         try:
             draft = await draft_reply(
                 services.openai,
-                services.answer_model,
+                services.model,
                 state["message"],
                 state.get("search"),
                 state.get("evidence", []),
@@ -277,22 +275,7 @@ def turn_result(turn: Turn, previous: SearchState | None) -> TurnResult:
         searched=turn.get("searched", False),
         broader=turn.get("broader"),
         note=turn.get("note"),
-        intent=turn.get("intent"),
     )
-
-
-async def answer(
-    graph: CompiledStateGraph[Turn, None, Turn, Turn],
-    message: str,
-    today: date,
-    previous: SearchState | None,
-    shown: list[EventResponse],
-) -> TurnResult:
-    """Run one turn to completion."""
-    turn: Turn = {"message": message, "today": today, "previous": previous, "shown": shown}
-    async for _, state in run_turn(graph, message, today, previous, shown):
-        turn = state
-    return turn_result(turn, previous)
 
 
 async def draft_reply(

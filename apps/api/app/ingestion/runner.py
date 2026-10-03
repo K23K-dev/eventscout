@@ -4,7 +4,6 @@ import asyncio
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from functools import partial
 from typing import Any
 from uuid import UUID
 
@@ -13,11 +12,8 @@ from psycopg import AsyncConnection
 from pydantic import JsonValue
 
 from app.database import connect_database
-from app.ingestion.freshness import load_caches, omitted_events, save_caches
-from app.ingestion.http import ResponseCache, use_cache
 from app.ingestion.matching import CatalogRecord, EventGroup, Observation, group_events
-from app.ingestion.recheck import recheck_event
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, in_window
+from app.ingestion.records import ParsedEvent, in_window
 from app.ingestion.sources import SOURCES, CalendarSource
 from app.settings import Settings
 from app.storage.models import EventContent, EventObservation
@@ -30,9 +26,7 @@ logger = logging.getLogger(__name__)
 class SourceReport:
     source: str
     publisher: str
-    run_id: str | None = None
     requests: int = 0
-    not_modified: int = 0
     records_seen: int = 0
     eligible_records: int = 0
     created: int = 0
@@ -40,11 +34,6 @@ class SourceReport:
     unchanged: int = 0
     linked: int = 0
     merged: int = 0
-    recheck_attempts: int = 0
-    rechecked: int = 0
-    unconfirmed: int = 0
-    recheck_deferred: int = 0
-    coverage_complete: bool = True
     issues: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -76,27 +65,11 @@ def _client() -> httpx.AsyncClient:
 
 
 async def _collect(
-    sources: list[CalendarSource],
-    start: datetime,
-    end: datetime,
-    report: ImportReport,
-    *,
-    connection: AsyncConnection[dict[str, Any]] | None = None,
-    source_ids: dict[str, UUID] | None = None,
+    sources: list[CalendarSource], start: datetime, end: datetime, report: ImportReport
 ) -> list[Observation]:
-    caches = (
-        await load_caches(connection, source_ids)
-        if connection is not None and source_ids is not None
-        else {source.config.slug: ResponseCache() for source in sources}
-    )
     async with _client() as client:
-
-        async def collect_source(source: CalendarSource) -> SourceCollection:
-            with use_cache(caches[source.config.slug]):
-                return await source.collect(client, window_start=start, window_end=end)
-
         collections = await asyncio.gather(
-            *(collect_source(source) for source in sources),
+            *(source.collect(client, window_start=start, window_end=end) for source in sources),
             return_exceptions=True,
         )
     observations: list[Observation] = []
@@ -105,7 +78,6 @@ async def _collect(
             summary.issues.append(f"Collection failed ({type(collection).__name__})")
             continue
         summary.requests = collection.requests
-        summary.coverage_complete = collection.coverage_complete
         summary.records_seen = collection.records_seen
         summary.issues.extend(
             f"{issue.external_id or 'feed'}: {issue.message}" for issue in collection.issues
@@ -144,53 +116,6 @@ async def _collect(
             Observation(source.config.slug, source.config.publisher, source.priority, event)
             for event in events
         )
-    if connection is not None and source_ids is not None:
-        seen = {(item.source, item.event.external_id) for item in observations}
-        candidates, deferred = await omitted_events(connection, source_ids, seen, start)
-        await connection.execute(
-            "UPDATE eventscout.source_records SET last_recheck_at = %s WHERE id = ANY(%s)",
-            (start, [item.record_id for item in candidates]),
-        )
-        semaphore = asyncio.Semaphore(4)
-        async with _client() as client:
-
-            async def recheck_source(source: CalendarSource, summary: SourceReport) -> None:
-                slug = source.config.slug
-                items = [item for item in candidates if item.source == slug]
-                options = source.collect.keywords if isinstance(source.collect, partial) else {}
-                with use_cache(caches[slug]):
-                    for index, item in enumerate(items):
-                        if index:
-                            await asyncio.sleep(options.get("crawl_delay", 1))
-                        summary.recheck_attempts += 1
-                        async with semaphore:
-                            result = await recheck_event(client, source, item.event, now=start)
-                        if isinstance(result, ParseIssue):
-                            summary.unconfirmed += 1
-                            logger.info("%s: %s: %s", slug, result.external_id, result.message)
-                        else:
-                            summary.rechecked += 1
-                            observations.append(
-                                Observation(slug, source.config.publisher, source.priority, result)
-                            )
-                summary.recheck_deferred = deferred.get(slug, 0)
-                if summary.unconfirmed or summary.recheck_deferred:
-                    summary.coverage_complete = False
-                    summary.warnings.append(
-                        f"{summary.unconfirmed + summary.recheck_deferred} previously listed "
-                        "upcoming events still need confirmation from their organizers."
-                    )
-
-            await asyncio.gather(
-                *(
-                    recheck_source(source, summary)
-                    for source, summary in zip(sources, report.sources, strict=True)
-                )
-            )
-        await save_caches(connection, source_ids, caches)
-    for summary in report.sources:
-        summary.requests = caches[summary.source].requests
-        summary.not_modified = caches[summary.source].not_modified
     return observations
 
 
@@ -345,112 +270,66 @@ async def run_import(
             raise RuntimeError("Another catalog import is already running")
         store = EventStore(connection)
         source_ids: dict[str, UUID] = {}
-        run_ids: dict[str, UUID] = {}
         summaries = {summary.source: summary for summary in report.sources}
         catalog = await _catalog(connection)
         identities = {(row.source, row.external_id) for row in catalog}
-        try:
-            for source in sources:
-                saved = await store.upsert_source(source.config)
-                source_ids[source.config.slug] = saved.id
-                run_ids[source.config.slug] = await store.start_run(saved.id)
-                summaries[source.config.slug].run_id = str(run_ids[source.config.slug])
-            observations = await _collect(
-                sources, start, end, report, connection=connection, source_ids=source_ids
-            )
-            observed_at = datetime.now(UTC)
-            groups = _groups(observations, catalog, start, end, report)
-            pending = iter(groups)
-            completed = 0
+        for source in sources:
+            source_ids[source.config.slug] = (await store.upsert_source(source.config)).id
+        observations = await _collect(sources, start, end, report)
+        observed_at = datetime.now(UTC)
+        groups = _groups(observations, catalog, start, end, report)
+        pending = iter(groups)
+        completed = 0
 
-            async def worker() -> None:
-                nonlocal completed
-                async with connect_database(settings) as writer:
-                    writer_store = EventStore(writer)
-                    for group in pending:
-                        primary = group.primary
-                        members = sorted(
-                            group.observations, key=lambda member: member is not primary
-                        )
-                        try:
-                            results = await writer_store.upsert_group(
-                                [
-                                    EventObservation(
-                                        source_id=source_ids[member.source],
-                                        external_id=member.event.external_id,
-                                        content=member.event.content,
-                                        observed_at=observed_at,
-                                        source_updated_at=member.event.source_updated_at,
-                                        raw_payload=member.event.raw_payload,
-                                        run_id=run_ids[member.source],
-                                    )
-                                    for member in members
-                                ],
-                                canonical_event_id=group.event_id,
-                                merge_ids=group.merge_ids,
-                                update_content=primary is not None,
-                            )
-                        except StaleObservationError:
-                            for member in members:
-                                summaries[member.source].issues.append(
-                                    f"{member.event.external_id}: newer observation stored; "
-                                    "group unchanged"
+        async def worker() -> None:
+            nonlocal completed
+            async with connect_database(settings) as writer:
+                writer_store = EventStore(writer)
+                for group in pending:
+                    primary = group.primary
+                    members = sorted(group.observations, key=lambda member: member is not primary)
+                    try:
+                        results = await writer_store.upsert_group(
+                            [
+                                EventObservation(
+                                    source_id=source_ids[member.source],
+                                    external_id=member.event.external_id,
+                                    content=member.event.content,
+                                    observed_at=observed_at,
+                                    source_updated_at=member.event.source_updated_at,
+                                    raw_payload=member.event.raw_payload,
                                 )
-                            continue
-                        summaries[members[0].source].merged += len(group.merge_ids)
-                        for member, result in zip(members, results, strict=True):
-                            summary = summaries[member.source]
-                            if result.changed:
-                                if result.content_version == 1:
-                                    summary.created += 1
-                                else:
-                                    summary.updated += 1
-                            elif (member.source, member.event.external_id) not in identities:
-                                summary.linked += 1
+                                for member in members
+                            ],
+                            canonical_event_id=group.event_id,
+                            merge_ids=group.merge_ids,
+                            update_content=primary is not None,
+                        )
+                    except StaleObservationError:
+                        for member in members:
+                            summaries[member.source].issues.append(
+                                f"{member.event.external_id}: newer observation stored; "
+                                "group unchanged"
+                            )
+                        continue
+                    summaries[members[0].source].merged += len(group.merge_ids)
+                    for member, result in zip(members, results, strict=True):
+                        summary = summaries[member.source]
+                        if result.changed:
+                            if result.content_version == 1:
+                                summary.created += 1
                             else:
-                                summary.unchanged += 1
-                        completed += 1
-                        if completed % 250 == 0 or completed == len(groups):
-                            logger.info("Stored %s/%s unique event groups", completed, len(groups))
+                                summary.updated += 1
+                        elif (member.source, member.event.external_id) not in identities:
+                            summary.linked += 1
+                        else:
+                            summary.unchanged += 1
+                    completed += 1
+                    if completed % 250 == 0 or completed == len(groups):
+                        logger.info("Stored %s/%s unique event groups", completed, len(groups))
 
-            async with asyncio.TaskGroup() as tasks:
-                for _ in range(min(4, len(groups))):
-                    tasks.create_task(worker())
-        except BaseException as exc:
-            for summary in report.sources:
-                if summary.source not in run_ids:
-                    continue
-                await store.finish_run(
-                    run_ids[summary.source],
-                    status="failed",
-                    records_seen=summary.records_seen,
-                    error=f"Import interrupted ({type(exc).__name__}); rerun to resume safely.",
-                )
-            raise
-        for summary in report.sources:
-            await store.finish_run(
-                run_ids[summary.source],
-                status="failed" if summary.issues else "succeeded",
-                records_seen=summary.records_seen,
-                error="\n".join(summary.issues)[:4000] if summary.issues else None,
-                coverage={
-                    "window_start": report.window_start,
-                    "window_end": report.window_end,
-                    "requests": summary.requests,
-                    "not_modified": summary.not_modified,
-                    "records_seen": summary.records_seen,
-                    "eligible_records": summary.eligible_records,
-                    "stored": summary.created
-                    + summary.updated
-                    + summary.linked
-                    + summary.unchanged,
-                    "recheck_attempts": summary.recheck_attempts,
-                    "rechecked": summary.rechecked,
-                    "unconfirmed": summary.unconfirmed,
-                    "recheck_deferred": summary.recheck_deferred,
-                    "incomplete": not summary.coverage_complete,
-                    "warnings": summary.warnings,
-                },
-            )
+        async with asyncio.TaskGroup() as tasks:
+            for _ in range(min(4, len(groups))):
+                tasks.create_task(worker())
         report.catalog = await catalog_metrics(connection, start, end)
     return report

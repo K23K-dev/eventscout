@@ -1,7 +1,7 @@
 """Postgres event storage; every write owns one complete transaction."""
 
 import json
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from psycopg import AsyncConnection, sql
@@ -22,10 +22,6 @@ _CONTENT_PLACEHOLDERS = sql.SQL(", ").join(sql.Placeholder() for _ in _CONTENT_C
 _CONTENT_ASSIGNMENTS = sql.SQL(", ").join(
     sql.SQL("{} = %s").format(sql.Identifier(name)) for name in _CONTENT_COLUMNS
 )
-
-
-class InvalidRunError(ValueError):
-    """The ingestion run does not exist, belongs to another source, or is finished."""
 
 
 class StaleObservationError(ValueError):
@@ -71,81 +67,6 @@ class EventStore:
             assert row is not None
             return Source.model_validate(row)
 
-    async def start_run(self, source_id: UUID) -> UUID:
-        self._require_idle()
-        async with self._connection.transaction():
-            cursor = await self._connection.execute(
-                "INSERT INTO eventscout.ingestion_runs (source_id) VALUES (%s) "
-                "RETURNING id, started_at",
-                (source_id,),
-            )
-            row = await cursor.fetchone()
-            assert row is not None
-            await self._connection.execute(
-                "UPDATE eventscout.sources SET last_attempt_at = %s WHERE id = %s",
-                (row["started_at"], source_id),
-            )
-            return UUID(str(row["id"]))
-
-    async def finish_run(
-        self,
-        run_id: UUID,
-        *,
-        status: Literal["succeeded", "failed"],
-        records_seen: int = 0,
-        error: str | None = None,
-        coverage: dict[str, Any] | None = None,
-    ) -> None:
-        self._require_idle()
-        if status not in {"succeeded", "failed"} or records_seen < 0:
-            raise ValueError("a finished run needs a terminal status and nonnegative records_seen")
-        if status == "succeeded" and error is not None:
-            raise ValueError("a successful run cannot have an error")
-        async with self._connection.transaction():
-            cursor = await self._connection.execute(
-                """
-                UPDATE eventscout.ingestion_runs
-                SET status = %s, records_seen = %s, error = %s, finished_at = clock_timestamp()
-                WHERE id = %s AND status = 'running' RETURNING source_id, started_at, finished_at
-                """,
-                (status, records_seen, error, run_id),
-            )
-            run = await cursor.fetchone()
-            if run is None:
-                raise InvalidRunError("run is missing or already finished")
-            health = "healthy" if status == "succeeded" else "failed"
-            if coverage and (coverage.get("incomplete") or (error and coverage.get("stored", 0))):
-                health = "partial"
-            await self._connection.execute(
-                """UPDATE eventscout.sources SET health_status = %s,
-                   last_success_at = CASE WHEN %s = 'healthy' THEN %s ELSE last_success_at END,
-                   coverage = COALESCE(%s, coverage)
-                   WHERE id = %s AND last_attempt_at = %s""",
-                (
-                    health,
-                    health,
-                    run["finished_at"],
-                    Jsonb(coverage) if coverage is not None else None,
-                    run["source_id"],
-                    run["started_at"],
-                ),
-            )
-
-    async def upsert_event(
-        self,
-        observation: EventObservation,
-        *,
-        canonical_event_id: UUID | None = None,
-        update_content: bool = True,
-    ) -> UpsertResult:
-        """Store one observation using the same atomic path as reconciled groups."""
-        results = await self.upsert_group(
-            [observation],
-            canonical_event_id=canonical_event_id,
-            update_content=update_content,
-        )
-        return results[0]
-
     async def upsert_group(
         self,
         observations: list[EventObservation],
@@ -173,14 +94,6 @@ class EventStore:
         content_hash = observations[0].content.content_hash()
         values = _content_values(observations[0].content)
         async with self._connection.transaction():
-            for run_id, source_id in sorted(
-                {
-                    (observation.run_id, observation.source_id)
-                    for observation in observations
-                    if observation.run_id is not None
-                }
-            ):
-                await self._validate_run(run_id, source_id)
             # Lock identities even when their source records have not been created yet.
             for identity in sorted(identities):
                 await self._connection.execute(
@@ -315,7 +228,6 @@ class EventStore:
                     observation.observed_at,
                     observation.source_updated_at,
                     Jsonb(observation.raw_payload),
-                    observation.run_id,
                     Jsonb(content),
                 )
                 if record is None:
@@ -323,8 +235,8 @@ class EventStore:
                         """
                         INSERT INTO eventscout.source_records
                             (event_id, source_id, external_id, occurrence_key, observed_at,
-                             source_updated_at, raw_payload, run_id, content)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                             source_updated_at, raw_payload, content)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
                         """,
                         (event["id"], *identity, *metadata),
                     )
@@ -335,7 +247,7 @@ class EventStore:
                         """
                         UPDATE eventscout.source_records
                         SET observed_at = %s, source_updated_at = COALESCE(%s, source_updated_at),
-                            raw_payload = %s, run_id = %s, content = %s,
+                            raw_payload = %s, content = %s,
                             updated_at = clock_timestamp()
                         WHERE id = %s
                         """,
@@ -350,15 +262,6 @@ class EventStore:
                     )
                 )
             return results
-
-    async def _validate_run(self, run_id: UUID, source_id: UUID) -> None:
-        cursor = await self._connection.execute(
-            "SELECT source_id, status FROM eventscout.ingestion_runs WHERE id = %s FOR SHARE",
-            (run_id,),
-        )
-        run = await cursor.fetchone()
-        if run is None or run["source_id"] != source_id or run["status"] != "running":
-            raise InvalidRunError("run must be active and belong to the observation source")
 
 
 def _content_values(content: EventContent) -> tuple[Any, ...]:

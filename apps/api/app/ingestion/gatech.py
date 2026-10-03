@@ -1,12 +1,11 @@
 """Parse Georgia Tech's RSS records without guessing missing event details."""
 
 import asyncio
-import json
 import re
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from html import escape, unescape
+from html import unescape
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
@@ -69,7 +68,7 @@ FEEDS = {
 async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
-    """Merge category views before filtering; retain old records for reschedule updates."""
+    """Every category view's records; the import keeps each event's newest version."""
     result = SourceCollection(events=[], records_seen=0, requests=0, issues=[])
     semaphore = asyncio.Semaphore(2)
 
@@ -83,13 +82,11 @@ async def collect(
                 return exc
 
     responses = await asyncio.gather(*(download(term) for term in FEEDS.values()))
-    candidates: dict[str, list[tuple[ParsedEvent, str]]] = {}
     for (name, term), response in zip(FEEDS.items(), responses, strict=True):
         result.requests += 1
         url = f"https://calendar.gatech.edu/taxonomy/term/{term}/feed"
         if isinstance(response, Exception):
             if name == "student":
-                result.coverage_complete = False
                 result.warnings.append(
                     "Student-sponsored feed is unavailable; coverage of that category is partial"
                 )
@@ -104,7 +101,6 @@ async def collect(
                 raise ValueError("unexpectedly empty feed")
         except ValueError as exc:
             if name == "student":
-                result.coverage_complete = False
                 result.warnings.append(
                     "Student-sponsored feed is unavailable; coverage of that category is partial"
                 )
@@ -113,36 +109,22 @@ async def collect(
             continue
         result.records_seen += parsed.records_seen
         result.issues.extend(parsed.issues)
+        feed_urls: list[JsonValue] = [url]
         for event in parsed.events:
-            candidates.setdefault(event.external_id, []).append((event, url))
-    for external_id, versions in candidates.items():
-        revisions = [event.source_updated_at for event, _ in versions]
-        if all(revision is not None for revision in revisions):
-            latest = max(revision for revision in revisions if revision is not None)
-            newest = [event for event, _ in versions if event.source_updated_at == latest]
-        else:
-            newest = [event for event, _ in versions]
-        if len({event.content.content_hash() for event in newest}) != 1:
-            result.issues.append(ParseIssue(external_id, "conflicting category-feed revisions"))
-            continue
-        chosen = max(
-            newest, key=lambda event: event.source_updated_at or datetime.min.replace(tzinfo=UTC)
-        )
-        if re.search(
-            r"\b(?:application|grade substitution|withdrawal|progress report) deadline\b",
-            chosen.content.title,
-            re.I,
-        ) or re.fullmatch(
-            r"(?:Fall|Spring|Winter|Summer|Thanksgiving) Break"
-            r"(?:\s*[-:]\s*(?:No Classes|Campus Closed))?",
-            chosen.content.title,
-            re.I,
-        ):
-            continue
-        feed_urls: list[JsonValue] = list(sorted({url for _, url in versions}))
-        result.events.append(
-            replace(chosen, raw_payload={**chosen.raw_payload, "feed_urls": feed_urls})
-        )
+            if re.search(
+                r"\b(?:application|grade substitution|withdrawal|progress report) deadline\b",
+                event.content.title,
+                re.I,
+            ) or re.fullmatch(
+                r"(?:Fall|Spring|Winter|Summer|Thanksgiving) Break"
+                r"(?:\s*[-:]\s*(?:No Classes|Campus Closed))?",
+                event.content.title,
+                re.I,
+            ):
+                continue
+            result.events.append(
+                replace(event, raw_payload={**event.raw_payload, "feed_urls": feed_urls})
+            )
     return result
 
 
@@ -401,68 +383,3 @@ def parse_feed(xml: bytes) -> ParsedFeed:
             continue
         result.events.append(parsed)
     return result
-
-
-def parse_detail(data: bytes, previous: ParsedEvent) -> ParsedEvent:
-    """Read the Mercury record linked by the original Campus Calendar RSS item."""
-    mercury_id = previous.raw_payload.get("mercury_id")
-    if not isinstance(mercury_id, str) or not mercury_id.isdigit():
-        raise ValueError("Missing stable Mercury ID")
-    document = json.loads(data).get(mercury_id, {})
-    record = document.get("#data", {})
-    if document.get("#nid") != mercury_id or record.get("type") != "event":
-        raise ValueError("Mercury detail did not identify the expected event")
-    times = record["field_event_time"]
-    if not times.get("event_time_start"):
-        raise ValueError("Mercury detail is missing the event start")
-    if times.get("rrule") or previous.content.all_day:
-        raise ValueError("Mercury detail cannot confirm this recurring or all-day occurrence")
-    body = "".join(part["value"] for part in record.get("body", []))
-    if not _text(body):
-        body = "".join(part["value"] for part in record.get("field_summary", []))
-    sections = ["<span></span>" * 3, body, "\nEvent time\n"]
-    for key in ("event_time_start", "event_time_end"):
-        if value := times.get(key):
-            sections.append(f'<time datetime="{escape(value, quote=True)}"></time>')
-    sections.extend(
-        [
-            "\nLocation\n",
-            escape(record.get("location", "")),
-            "\nExtras\n",
-            *(
-                f'<a href="{escape(link["url"], quote=True)}">{escape(link["title"])}</a>'
-                for link in record.get("related_links", [])
-            ),
-        ]
-    )
-    for field, path in (
-        ("event_categories", "/event/listings/"),
-        ("keywords", "/event/listings/"),
-        ("invited_audience", "/event/invited-audience/"),
-    ):
-        sections.extend(
-            f'<a href="https://calendar.gatech.edu{path}{escape(tag["id"], quote=True)}">'
-            f"{escape(tag['name'])}</a>"
-            for tag in record.get(field, [])
-        )
-    # Mercury's export omits the RSS Fee field; price stays unknown unless the
-    # current tags or description establish it through the regular RSS parser.
-    updated_at = _aware_time(record["changed_gmt"].replace(" ", "T") + "Z")
-    sections.extend(
-        [
-            f"\nMercury ID\n{mercury_id}\nSource updated\n",
-            f'<time datetime="{updated_at.isoformat()}"></time>',
-        ]
-    )
-    item = ElementTree.Element("item")
-    for key, value in (
-        ("title", record["title"]),
-        ("link", str(previous.content.source_url)),
-        ("description", "".join(sections)),
-    ):
-        ElementTree.SubElement(item, key).text = value
-    parsed = _parse_item(item, previous.external_id)
-    return replace(
-        parsed,
-        raw_payload={**parsed.raw_payload, "mercury_detail": document},
-    )

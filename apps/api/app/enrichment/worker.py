@@ -88,7 +88,7 @@ async def run_enrichment(settings: Settings, *, limit: int) -> EnrichReport:
         async def enrich(row: dict[str, Any]) -> tuple[str, Enrichment] | Exception | None:
             async with semaphore:
                 try:
-                    enrichment, usage = await _enrich(openai, settings.enrichment_model, row)
+                    enrichment, usage = await _enrich(openai, settings.openai_model, row)
                 except ValueError:
                     report.rejected += 1
                     return None
@@ -108,7 +108,7 @@ async def run_enrichment(settings: Settings, *, limit: int) -> EnrichReport:
                            (content_hash, prompt_version, summary, topics, model)
                            VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
                         [
-                            (hash_, PROMPT_VERSION, e.summary, e.topics, settings.enrichment_model)
+                            (hash_, PROMPT_VERSION, e.summary, e.topics, settings.openai_model)
                             for hash_, e in done
                         ],
                     )

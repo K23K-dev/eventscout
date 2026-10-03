@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import re
-from dataclasses import dataclass, field
 from datetime import datetime, time
 from typing import Any
 from uuid import UUID
@@ -23,17 +22,6 @@ _DATES = re.compile(
     r"|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
     r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"
 )
-
-
-@dataclass
-class SearchResults:
-    hybrid: list[EventResponse]
-    keyword: list[EventResponse]
-    vector: list[EventResponse]
-    # Positions within each full ranking, to explain the fused order.
-    keyword_ranks: dict[UUID, int] = field(default_factory=dict)
-    vector_ranks: dict[UUID, int] = field(default_factory=dict)
-    vector_error: str | None = None
 
 
 def fuse(*rankings: list[UUID], k: int = RRF_K) -> list[UUID]:
@@ -92,14 +80,14 @@ async def search_events(
     keywords: str | None = None,
     limit: int = 5,
     depth: int = 30,
-) -> SearchResults:
+) -> list[EventResponse]:
     """Rank by keywords and by meaning, fuse, and drop anything that fails a filter.
 
     Keywords default to the query itself. Without either, the structured filters alone
     apply and events come soonest first.
     """
     text = (query if keywords is None else keywords).strip()
-    (keyword_ids, _), (vector_ids, vector_error) = await asyncio.gather(
+    keyword_ids, vector_ids = await asyncio.gather(
         # With a query but no keywords, a keyword ranking would only add date order.
         _keyword_ranking(repository, text, filters, depth)
         if text or not query.strip()
@@ -108,32 +96,21 @@ async def search_events(
     )
     fused = fuse(keyword_ids, vector_ids)
     current = {event.id: event for event in await repository.get_many(fused, filters)}
-
-    def top(ranking: list[UUID]) -> list[EventResponse]:
-        return distinct([current[event_id] for event_id in ranking if event_id in current])[:limit]
-
-    return SearchResults(
-        hybrid=top(fused),
-        keyword=top(keyword_ids),
-        vector=top(vector_ids),
-        keyword_ranks={event_id: rank for rank, event_id in enumerate(keyword_ids, start=1)},
-        vector_ranks={event_id: rank for rank, event_id in enumerate(vector_ids, start=1)},
-        vector_error=vector_error,
-    )
+    return distinct([current[event_id] for event_id in fused if event_id in current])[:limit]
 
 
 async def _keyword_ranking(
     repository: EventRepository, text: str, filters: EventFilters, depth: int
-) -> tuple[list[UUID], str | None]:
+) -> list[UUID]:
     ranked = filters.model_copy(
         update={"q": text or None, "sort": "relevance", "page": 1, "page_size": depth}
     )
-    return [event.id for event in (await repository.search(ranked)).items], None
+    return [event.id for event in (await repository.search(ranked)).items]
 
 
 async def _vector_ranking(
     openai: AsyncOpenAI, index: AsyncIndex, query: str, filters: EventFilters, depth: int
-) -> tuple[list[UUID], str | None]:
+) -> list[UUID]:
     try:
         response = await openai.embeddings.create(model=EMBEDDING_MODEL, input=[query], timeout=10)
         matches = await index.documents.search(
@@ -146,9 +123,9 @@ async def _vector_ranking(
         )
     except (OpenAIError, PineconeError, TimeoutError) as exc:
         logger.warning("Vector search unavailable (%s); using keyword results", type(exc).__name__)
-        return [], type(exc).__name__
-    return [UUID(match.id) for match in matches.matches], None
+        return []
+    return [UUID(match.id) for match in matches.matches]
 
 
-async def _no_ranking() -> tuple[list[UUID], str | None]:
-    return [], None
+async def _no_ranking() -> list[UUID]:
+    return []

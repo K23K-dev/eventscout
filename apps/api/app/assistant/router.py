@@ -27,7 +27,7 @@ from app.assistant.models import (
     TurnView,
 )
 from app.assistant.store import ConversationStore, TurnInProgress
-from app.auth import InvalidToken, KeysUnavailable, TokenVerifier, User
+from app.auth import InvalidToken, KeysUnavailable, TokenVerifier
 from app.database import connect_database
 from app.events.models import CATALOG_TIMEZONE, ErrorResponse, EventResponse
 from app.events.repository import EventRepository
@@ -112,20 +112,21 @@ def create_assistant_router(
     )
     verifier = TokenVerifier(settings.supabase_url) if settings.supabase_url else None
 
-    async def current_user(
+    async def current_owner(
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
-    ) -> User:
+    ) -> UUID:
+        """The signed-in account, whose ID owns its conversations."""
         challenge = {"WWW-Authenticate": "Bearer"}
         if credentials is None:
             if settings.allow_chat_without_login:
-                return User(id=LOCAL_OWNER)
+                return LOCAL_OWNER
             raise HTTPException(
                 status_code=401, detail="Sign in to use AI search.", headers=challenge
             )
         if verifier is None:
             raise HTTPException(status_code=503, detail="Sign-in isn't configured.")
         try:
-            return await verifier.user(credentials.credentials)
+            return await verifier.user_id(credentials.credentials)
         except InvalidToken:
             raise HTTPException(
                 status_code=401, detail="Sign in again to use AI search.", headers=challenge
@@ -135,9 +136,6 @@ def create_assistant_router(
             raise HTTPException(
                 status_code=503, detail="Sign-in is temporarily unavailable."
             ) from None
-
-    async def current_owner(user: Annotated[User, Depends(current_user)]) -> UUID:
-        return user.id
 
     async def database() -> AsyncGenerator[AsyncConnection[dict[str, Any]]]:
         async with AsyncExitStack() as stack:
@@ -220,12 +218,7 @@ def create_assistant_router(
                     openai, index = await clients.get()
                     repository = EventRepository(connection, enabled_sources)
                     services = Services(
-                        connection,
-                        repository,
-                        openai,
-                        index,
-                        settings.intent_model,
-                        settings.answer_model,
+                        connection, repository, openai, index, settings.openai_model
                     )
                     turn: Turn = {}
                     async with clients.writing:
@@ -363,10 +356,5 @@ def create_assistant_router(
         """Delete a conversation and all of its turns."""
         if not await ConversationStore(connection, owner).delete(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
-
-    @router.get("/me", response_model=User, operation_id="getMe")
-    async def me(user: Annotated[User, Depends(current_user)]) -> User:
-        """The account the chat endpoints act for."""
-        return user
 
     return router

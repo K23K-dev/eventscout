@@ -19,9 +19,8 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     pinecone_api_key: SecretStr | None = None
     pinecone_index: str = "eventscout"
-    intent_model: str = "gpt-5.6-luna"
-    answer_model: str = "gpt-5.6-luna"
-    enrichment_model: str = "gpt-5.6-luna"
+    # Parses chat messages, writes answers, and summarizes events.
+    openai_model: str = "gpt-5.6-luna"
     supabase_url: str | None = None
     allow_chat_without_login: bool = False
 

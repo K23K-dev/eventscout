@@ -7,17 +7,11 @@ from uuid import UUID
 
 import httpx
 import jwt
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 # Supabase signs access tokens with the project's ES256 key; only that algorithm is accepted.
 ALGORITHMS = ["ES256"]
-
-
-class User(BaseModel):
-    id: UUID
-    email: str | None = None
 
 
 class InvalidToken(Exception):
@@ -37,7 +31,7 @@ class TokenVerifier:
         self._fetched_at = float("-inf")
         self._lock = asyncio.Lock()
 
-    async def user(self, token: str) -> User:
+    async def user_id(self, token: str) -> UUID:
         try:
             kid = jwt.get_unverified_header(token).get("kid")
         except jwt.PyJWTError as exc:
@@ -55,7 +49,7 @@ class TokenVerifier:
             )
             if claims.get("is_anonymous"):
                 raise InvalidToken("Anonymous sessions can't use AI search.")
-            return User(id=UUID(claims["sub"]), email=claims.get("email") or None)
+            return UUID(claims["sub"])
         except (jwt.PyJWTError, ValueError) as exc:
             raise InvalidToken from exc
 

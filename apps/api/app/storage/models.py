@@ -116,7 +116,6 @@ class EventObservation(_FrozenModel):
     observed_at: AwareDatetime
     source_updated_at: AwareDatetime | None = None
     raw_payload: JsonValue = Field(default_factory=dict)
-    run_id: UUID | None = None
 
     @field_validator("observed_at", "source_updated_at")
     @classmethod
