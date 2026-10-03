@@ -1,5 +1,5 @@
-import type { Answer as AnswerData } from '../api'
-import { EventCard } from './EventCard'
+import type { Answer as AnswerData } from '@/lib/api'
+import { EventCard } from '@/components/EventCard'
 
 export function Answer({ id, answer, backTo }: { id: string; answer: AnswerData; backTo: string }) {
   return (

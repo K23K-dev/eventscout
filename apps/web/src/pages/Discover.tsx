@@ -11,24 +11,32 @@ import {
 import { createElement, useRef, type FormEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { fetchEvents, type Event } from './api'
-import { DateRangePicker } from './components/DateRangePicker'
-import { EventRow } from './components/EventCard'
-import { Filters } from './components/Filters'
-import { Button, buttonVariants } from './components/ui/button'
-import { Input } from './components/ui/input'
+import { fetchEvents, type Event } from '@/lib/api'
+import { DateRangePicker } from '@/components/DateRangePicker'
+import { EventRow } from '@/components/EventCard'
+import { Filters } from '@/components/Filters'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from './components/ui/select'
-import { Skeleton } from './components/ui/skeleton'
-import { Toggle } from './components/ui/toggle'
-import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group'
-import { addDays, calendarDate, dateWindow, dayHeading, formatDate, span, today } from './events'
-import { topics } from './topics'
+} from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Toggle } from '@/components/ui/toggle'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  addDays,
+  calendarDate,
+  dateWindow,
+  dayHeading,
+  formatDate,
+  span,
+  today,
+} from '@/lib/events'
+import { topics } from '@/lib/topics'
 
 const filterKeys = [
   'q',
@@ -94,7 +102,7 @@ function byDay(events: Event[], windowStart: string): Day[] {
   return days
 }
 
-export function App() {
+export function Discover() {
   const [searchParams, setSearchParams] = useSearchParams()
   const resultsHeading = useRef<HTMLHeadingElement>(null)
   const params = new URLSearchParams()

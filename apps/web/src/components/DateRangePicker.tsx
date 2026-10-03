@@ -2,10 +2,10 @@ import { CalendarDays } from 'lucide-react'
 import { useState } from 'react'
 import type { DateRange } from 'react-day-picker'
 import { cn } from '@/lib/utils'
-import { addDays, formatDate } from '../events'
-import { Button } from './ui/button'
-import { Calendar } from './ui/calendar'
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import { addDays, formatDate } from '@/lib/events'
+import { Button } from '@/components/ui/button'
+import { Calendar } from '@/components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 // The catalog's dates are plain calendar days; the calendar works in local Date objects.
 const toDate = (day: string) => new Date(`${day}T00:00:00`)

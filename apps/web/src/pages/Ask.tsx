@@ -13,10 +13,10 @@ import {
   type Answer as AnswerData,
   type Event,
   type Stage,
-} from '../api'
-import { signIn, useSession } from '../auth'
-import { Answer } from '../components/Answer'
-import { EventCard } from '../components/EventCard'
+} from '@/lib/api'
+import { signIn, useSession } from '@/lib/auth'
+import { Answer } from '@/components/Answer'
+import { EventCard } from '@/components/EventCard'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,10 +26,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '../components/ui/alert-dialog'
-import { Button, buttonVariants } from '../components/ui/button'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet'
-import { topics } from '../topics'
+} from '@/components/ui/alert-dialog'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { topics } from '@/lib/topics'
 
 const stages: Record<Stage, string> = {
   understanding: 'Understanding your question…',

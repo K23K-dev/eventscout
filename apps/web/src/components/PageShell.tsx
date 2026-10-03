@@ -2,9 +2,9 @@ import { Compass, LogOut, MessageCircle } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
 import { Link, NavLink, useLocation, useNavigationType } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { signIn, signOut, useSession } from '../auth'
-import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar'
-import { Button, buttonVariants } from './ui/button'
+import { signIn, signOut, useSession } from '@/lib/auth'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,7 +12,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from './ui/dropdown-menu'
+} from '@/components/ui/dropdown-menu'
 
 const sections = [
   ['/', 'Discover', Compass],

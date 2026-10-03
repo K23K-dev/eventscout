@@ -1,4 +1,4 @@
-import { accessToken } from './auth'
+import { accessToken } from '@/lib/auth'
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 const apiBaseUrl = (configuredBaseUrl || 'http://127.0.0.1:8000').replace(/\/+$/, '')

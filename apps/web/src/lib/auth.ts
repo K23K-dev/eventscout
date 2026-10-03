@@ -1,5 +1,6 @@
 import { AuthClient, type Session } from '@supabase/auth-js'
 import { useSyncExternalStore } from 'react'
+import { toast } from 'sonner'
 
 // Only Supabase's sign-in client: the full supabase-js adds database, storage, and realtime code.
 const url = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '')
@@ -74,7 +75,7 @@ export async function signIn() {
     options: { redirectTo: window.location.href },
   })
   if (!result || result.error)
-    window.alert('Google sign-in isn’t available right now. Please try again later.')
+    toast.error('Google sign-in isn’t available right now. Please try again later.')
 }
 
 export async function signOut() {

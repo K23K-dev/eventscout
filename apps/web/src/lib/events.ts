@@ -1,4 +1,4 @@
-import type { Event } from './api'
+import type { Event } from '@/lib/api'
 
 export const timezone = 'America/New_York'
 export const priceLabels = {
@@ -78,13 +78,6 @@ export function eventDate(event: Event) {
   return end && first !== formatDate(end, options)
     ? `${first} – ${formatDate(end, options)}`
     : first
-}
-
-export function eventTime(event: Event) {
-  if (event.all_day) return 'All day'
-  if (!event.starts_at) return 'Time to be announced'
-  const options: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' }
-  return `${formatDate(event.starts_at, options)}${event.ends_at ? ` – ${formatDate(event.ends_at, options)}` : ''}`
 }
 
 /** When it starts and ends (the end date is exclusive for all-day events). */

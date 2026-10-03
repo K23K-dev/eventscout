@@ -2,10 +2,10 @@ import { MapPin } from 'lucide-react'
 import { createElement, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import type { Event } from '../api'
-import { locationLabels, whenLabel } from '../events'
-import { topicOf } from '../topics'
-import { Badge } from './ui/badge'
+import type { Event } from '@/lib/api'
+import { locationLabels, whenLabel } from '@/lib/events'
+import { topicOf, type Topic } from '@/lib/topics'
+import { Badge } from '@/components/ui/badge'
 
 const priceTags: Partial<Record<Event['price_status'], string>> = {
   free: 'Free',
@@ -13,7 +13,7 @@ const priceTags: Partial<Record<Event['price_status'], string>> = {
   conditional: 'Varies',
 }
 
-export function PriceBadge({ event }: { event: Event }) {
+function PriceBadge({ event }: { event: Event }) {
   const price = priceTags[event.price_status]
   if (!price) return null
   return (
@@ -30,10 +30,8 @@ export function PriceBadge({ event }: { event: Event }) {
   )
 }
 
-/** The event's main category: a tinted icon with its name. */
-export function TopicBadge({ event }: { event: Event }) {
-  if (!event.topics.length) return null
-  const topic = topicOf(event)
+/** A category as a tinted icon with its name. */
+export function TopicBadge({ topic }: { topic: Topic }) {
   return (
     <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
       {createElement(topic.icon, { style: { color: topic.color }, 'aria-hidden': true })}
@@ -43,7 +41,7 @@ export function TopicBadge({ event }: { event: Event }) {
 }
 
 /** A small tinted square with the category icon, standing in for a cover image. */
-export function TopicIcon({ event, className }: { event: Event; className?: string }) {
+function TopicIcon({ event, className }: { event: Event; className?: string }) {
   const topic = topicOf(event)
   return (
     <div
@@ -119,7 +117,7 @@ export function EventRow({
         )}
       </div>
       <div className="hidden shrink-0 items-start gap-1.5 sm:flex">
-        <TopicBadge event={event} />
+        {event.topics.length > 0 && <TopicBadge topic={topicOf(event)} />}
         <PriceBadge event={event} />
       </div>
     </article>

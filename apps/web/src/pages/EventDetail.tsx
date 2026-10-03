@@ -15,16 +15,15 @@ import {
 import { createElement, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { ApiError, fetchEvent, type Event } from '../api'
-import { Badge } from '../components/ui/badge'
-import { Button } from '../components/ui/button'
-import { Skeleton } from '../components/ui/skeleton'
+import { ApiError, fetchEvent, type Event } from '@/lib/api'
+import { TopicBadge } from '@/components/EventCard'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   calendarDate,
   calendarFile,
   checkedAt,
   eventDate,
-  eventTime,
   formatDate,
   googleCalendarUrl,
   locationLabels,
@@ -32,8 +31,8 @@ import {
   span,
   timeRange,
   today,
-} from '../events'
-import { topics } from '../topics'
+} from '@/lib/events'
+import { topics } from '@/lib/topics'
 
 export function EventDetail() {
   const { eventId = '' } = useParams()
@@ -104,7 +103,7 @@ export function EventDetail() {
 
 function EventInformation({ event }: { event: Event }) {
   const [now] = useState(Date.now)
-  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
+  const day = today()
   const ended = event.all_day
     ? event.end_date
       ? event.end_date <= day
@@ -116,7 +115,7 @@ function EventInformation({ event }: { event: Event }) {
     Boolean(event.starts_at && Date.parse(event.starts_at) <= now)
   const cancelled = event.status === 'cancelled'
   const { start, end, multipleDays } = span(event)
-  const ongoing = !!(start && end && calendarDate(start) < today() && !ended)
+  const ongoing = !!(start && end && calendarDate(start) < day && !ended)
   const sheet = start && (ongoing ? end : start)
   const google = !ended && !cancelled ? googleCalendarUrl(event) : null
   const action = ended
@@ -157,21 +156,7 @@ function EventInformation({ event }: { event: Event }) {
           <div className="flex flex-wrap items-center gap-1.5">
             {event.topics.map(key => {
               const topic = topics[key]
-              return (
-                topic && (
-                  <Badge
-                    key={key}
-                    variant="outline"
-                    className="gap-1 font-normal text-muted-foreground"
-                  >
-                    {createElement(topic.icon, {
-                      style: { color: topic.color },
-                      'aria-hidden': true,
-                    })}{' '}
-                    {topic.label}
-                  </Badge>
-                )
-              )
+              return topic && <TopicBadge key={key} topic={topic} />
             })}
           </div>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight wrap-break-word sm:text-4xl">
@@ -293,7 +278,7 @@ function EventInformation({ event }: { event: Event }) {
             <Detail icon={CalendarDays} label="When">
               <p>{eventDate(event)}</p>
               <p className="text-muted-foreground">
-                {eventTime(event)}
+                {timeRange(event)}
                 {!event.all_day && event.starts_at ? ' (Eastern)' : ''}
               </p>
             </Detail>
