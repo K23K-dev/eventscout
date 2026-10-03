@@ -19,6 +19,7 @@ from app.ingestion.parsing import (
     cost_price,
     described_price,
     http_url,
+    image_url,
     issue_message,
     localize,
     text,
@@ -167,6 +168,7 @@ def _parse_detail(
                     "showing_html": str(showing),
                     "url": url,
                     "event_schema": schema,
+                    "image_url": image_url(schema.get("image")),
                 },
             )
         )

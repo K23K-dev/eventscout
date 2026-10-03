@@ -119,6 +119,18 @@ def http_url(value: str) -> HttpUrl:
     return HttpUrl(value)
 
 
+def image_url(value: object, base: str = "") -> str | None:
+    """An https picture address from a feed: a URL, a list of URLs, or an {"url": ...} object."""
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, dict):
+        value = value.get("url")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    url = urljoin(base, value.strip())
+    return url if url.startswith("https://") else None
+
+
 def publisher_url(value: str, base: str, path: str) -> str:
     parts = urlsplit(urljoin(base, value))
     if (

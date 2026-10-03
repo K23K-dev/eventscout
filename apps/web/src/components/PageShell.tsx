@@ -38,7 +38,7 @@ export function PageShell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-lg">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
           <Link
             className="flex shrink-0 items-center gap-2 text-[15px] font-semibold tracking-tight"
             to="/"
@@ -70,10 +70,10 @@ export function PageShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-6">{children}</div>
+      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 sm:px-6">{children}</div>
       {!pathname.startsWith('/ask') && (
         <footer className="border-t">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:px-6">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:px-6">
             <span>Built around campus. Open to the city.</span>
             <span>Times shown in Atlanta (Eastern).</span>
           </div>

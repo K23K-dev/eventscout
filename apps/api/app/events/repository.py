@@ -27,9 +27,12 @@ _SOURCE_DETAILS = sql.SQL("""
         WHERE content_hash = e.content_hash ORDER BY prompt_version DESC LIMIT 1
     ) enrichment ON true
 """)
-_DETAIL_COLUMNS = sql.SQL(
-    "provenance.sources, enrichment.summary, COALESCE(enrichment.topics, '{}') AS topics"
-)
+_DETAIL_COLUMNS = sql.SQL("""
+    provenance.sources, enrichment.summary, COALESCE(enrichment.topics, '{}') AS topics,
+    (SELECT r.raw_payload->>'image_url' FROM eventscout.source_records r
+     WHERE r.event_id = e.id AND r.raw_payload->>'image_url' IS NOT NULL
+     ORDER BY r.observed_at DESC LIMIT 1) AS image_url
+""")
 _START_TIME = sql.SQL("""
     CASE WHEN e.all_day THEN e.start_date::timestamp AT TIME ZONE e.timezone
          ELSE e.starts_at END

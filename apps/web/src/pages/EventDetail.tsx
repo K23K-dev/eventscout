@@ -15,7 +15,7 @@ import { createElement, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError, fetchEvent, type Event } from '@/lib/api'
-import { TopicBadge } from '@/components/EventCard'
+import { Cover, TopicBadge } from '@/components/EventCard'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -48,7 +48,7 @@ export function EventDetail() {
     <main
       id="main"
       tabIndex={-1}
-      className="mx-auto w-full max-w-5xl flex-1 py-6 focus:outline-none sm:py-8"
+      className="mx-auto w-full max-w-6xl flex-1 py-6 focus:outline-none sm:py-8"
     >
       <Button variant="ghost" size="sm" asChild className="-ml-2.5 text-muted-foreground">
         <Link to={backTo}>
@@ -136,6 +136,13 @@ function EventInformation({ event }: { event: Event }) {
       <title>{`${event.title} · EventScout`}</title>
       <div className="mt-5 grid grid-cols-1 items-start gap-y-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-x-12">
         <header className="min-w-0 lg:col-start-1 lg:row-start-1">
+          {event.image_url && (
+            <Cover
+              event={event}
+              className="mb-6 aspect-2/1 w-full rounded-lg border"
+              iconClassName="size-12"
+            />
+          )}
           <div className="flex flex-wrap items-center gap-1.5">
             {event.topics.map(key => {
               const topic = topics[key]

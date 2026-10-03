@@ -13,9 +13,9 @@ import { useSearchParams } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { fetchEvents, type Event } from '@/lib/api'
 import { DateRangePicker } from '@/components/DateRangePicker'
-import { EventRow } from '@/components/EventCard'
+import { EventTile } from '@/components/EventCard'
 import { Filters } from '@/components/Filters'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -26,16 +26,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toggle } from '@/components/ui/toggle'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import {
-  addDays,
-  calendarDate,
-  dateWindow,
-  dayHeading,
-  formatDate,
-  span,
-  today,
-} from '@/lib/events'
+import { calendarDate, dateRange, dateWindow, dayHeading, span } from '@/lib/events'
 import { topics } from '@/lib/topics'
 
 const filterKeys = [
@@ -50,26 +41,7 @@ const filterKeys = [
   'sort',
   'page',
 ]
-const presets = [
-  ['today', 'Today'],
-  ['tomorrow', 'Tomorrow'],
-  ['weekend', 'Weekend'],
-  ['week', '7 days'],
-  ['month', '30 days'],
-] as const
-type Preset = (typeof presets)[number][0]
-
-/** A preset's first day and its exclusive end. */
-function presetRange(kind: Preset): [string, string] {
-  const now = today()
-  if (kind === 'today') return [now, addDays(now, 1)]
-  if (kind === 'tomorrow') return [addDays(now, 1), addDays(now, 2)]
-  if (kind === 'week') return [now, addDays(now, 7)]
-  if (kind === 'month') return [now, addDays(now, 30)]
-  const weekday = new Date(`${now}T12:00:00Z`).getUTCDay()
-  const from = addDays(now, weekday === 0 ? 0 : (6 - weekday + 7) % 7)
-  return [from, addDays(from, weekday === 0 ? 1 : 2)]
-}
+const grid = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
 
 interface Day {
   key: string
@@ -109,7 +81,7 @@ export function Discover() {
     const value = searchParams.get(key)?.trim()
     if (value) params.set(key, value)
   }
-  params.set('page_size', '20')
+  params.set('page_size', '24')
   const query = useQuery({
     queryKey: ['events', params.toString()],
     queryFn: ({ signal }) => fetchEvents(params, signal),
@@ -119,10 +91,6 @@ export function Discover() {
   const hasFilters = filterKeys.some(key => !['sort', 'page'].includes(key) && params.has(key))
   const keywords = params.get('q') || ''
   const sort = params.get('sort') || 'relevance'
-  const activePreset = presets.find(([kind]) => {
-    const [from, to] = presetRange(kind)
-    return from === start && addDays(to, -1) === end
-  })?.[0]
   const free = params.get('price_status') === 'free'
   const campus = params.get('region') === 'gt'
   const topic = params.get('topic')
@@ -167,7 +135,7 @@ export function Discover() {
       : `${query.data.total.toLocaleString()} ${query.data.total === 1 ? 'event' : 'events'}${keywords ? ` for “${keywords}”` : ''}`
 
   return (
-    <main id="main" tabIndex={-1} className="mx-auto w-full max-w-4xl pb-16 focus:outline-none">
+    <main id="main" tabIndex={-1} className="w-full pb-16 focus:outline-none">
       <title>Discover events · EventScout</title>
       <header className="pt-10 pb-6 sm:pt-14">
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Discover</h1>
@@ -209,35 +177,10 @@ export function Discover() {
       </form>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <div className="-mx-4 w-[calc(100%+2rem)] overflow-x-auto px-4 scrollbar-none sm:mx-0 sm:w-auto sm:px-0">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={activePreset ?? ''}
-            onValueChange={value => {
-              if (value) {
-                const [from, to] = presetRange(value as Preset)
-                apply({ date_from: from, date_to: to })
-              }
-            }}
-            aria-label="When"
-          >
-            {presets.map(([kind, label]) => (
-              <ToggleGroupItem
-                key={kind}
-                value={kind}
-                className="px-3 data-[state=on]:text-primary"
-              >
-                {label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </div>
         <DateRangePicker
           start={start}
           end={end}
-          custom={!activePreset}
+          custom={params.has('date_from') || params.has('date_to')}
           apply={(from, until) => apply({ date_from: from, date_to: until })}
         />
         <Toggle
@@ -258,6 +201,23 @@ export function Discover() {
         >
           Georgia Tech
         </Toggle>
+        <Select
+          value={topic ?? 'any'}
+          onValueChange={value => apply({ topic: value === 'any' ? '' : value })}
+        >
+          <SelectTrigger size="sm" aria-label="Topic" className={cn(topic && 'text-primary')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">All topics</SelectItem>
+            {Object.entries(topics).map(([key, item]) => (
+              <SelectItem key={key} value={key}>
+                {createElement(item.icon, { style: { color: item.color }, 'aria-hidden': true })}
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Filters key={params.toString()} params={params} apply={apply} />
         <Select value={sort} onValueChange={value => apply({ sort: value })}>
           <SelectTrigger size="sm" className="ml-auto w-32" aria-label="Sort events">
@@ -268,36 +228,6 @@ export function Discover() {
             <SelectItem value="start_time">By date</SelectItem>
           </SelectContent>
         </Select>
-      </div>
-
-      <div
-        className="-mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 pb-1 mask-[linear-gradient(to_right,black_calc(100%-40px),transparent)] scrollbar-none sm:mx-0 sm:px-0"
-        role="group"
-        aria-label="Topics"
-      >
-        {Object.entries(topics).map(([key, item]) => {
-          const on = topic === key
-          return (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={on}
-              onClick={() => apply({ topic: on ? '' : key })}
-              className={cn(
-                buttonVariants({ variant: on ? 'secondary' : 'ghost', size: 'xs' }),
-                'h-7 shrink-0 cursor-pointer gap-1.5 px-2.5 font-normal',
-                on ? 'text-foreground' : 'text-muted-foreground',
-              )}
-            >
-              {createElement(item.icon, {
-                className: 'size-3.5',
-                style: { color: item.color },
-                'aria-hidden': true,
-              })}
-              {item.label}
-            </button>
-          )
-        })}
       </div>
 
       <section className="mt-8" aria-labelledby="results-heading" aria-busy={query.isFetching}>
@@ -313,7 +243,7 @@ export function Discover() {
               {heading}
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {formatDate(start)} – {formatDate(end)} · Eastern time
+              {dateRange(start, end)} · Eastern time
             </p>
           </div>
           {hasFilters && (
@@ -324,16 +254,17 @@ export function Discover() {
         </div>
 
         {query.isPending ? (
-          <div
-            className="mt-6 divide-y rounded-lg border bg-card"
-            role="status"
-            aria-label="Loading events"
-          >
-            {Array.from({ length: 6 }, (_, index) => (
-              <div key={index} className="flex gap-5 px-4 py-4" aria-hidden="true">
-                <Skeleton className="h-4 w-16" />
-                <div className="flex-1 space-y-2">
-                  <Skeleton className="h-4 w-2/3" />
+          <div className={cn(grid, 'mt-6')} role="status" aria-label="Loading events">
+            {Array.from({ length: 8 }, (_, index) => (
+              <div
+                key={index}
+                className="overflow-hidden rounded-lg border bg-card"
+                aria-hidden="true"
+              >
+                <Skeleton className="aspect-video w-full rounded-none" />
+                <div className="space-y-2 p-3.5">
+                  <Skeleton className="h-3.5 w-16" />
+                  <Skeleton className="h-4 w-4/5" />
                   <Skeleton className="h-3.5 w-1/2" />
                 </div>
               </div>
@@ -377,9 +308,9 @@ export function Discover() {
         ) : (
           <>
             {keywords && sort === 'relevance' ? (
-              <div className="mt-6 divide-y overflow-hidden rounded-lg border bg-card">
+              <div className={cn(grid, 'mt-6')}>
                 {query.data.items.map(event => (
-                  <EventRow key={event.id} event={event} backTo={`/${currentSearch}`} showDate />
+                  <EventTile key={event.id} event={event} backTo={`/${currentSearch}`} showDate />
                 ))}
               </div>
             ) : (
@@ -394,9 +325,9 @@ export function Discover() {
                         <span className="text-sm text-muted-foreground">{day.date}</span>
                       )}
                     </div>
-                    <div className="divide-y overflow-hidden rounded-lg border bg-card">
+                    <div className={grid}>
                       {day.events.map(event => (
-                        <EventRow key={event.id} event={event} backTo={`/${currentSearch}`} />
+                        <EventTile key={event.id} event={event} backTo={`/${currentSearch}`} />
                       ))}
                     </div>
                   </section>

@@ -13,17 +13,21 @@ const priceTags: Partial<Record<Event['price_status'], string>> = {
   conditional: 'Varies',
 }
 
-function PriceBadge({ event }: { event: Event }) {
+// Badges sitting on a picture get a solid backing so they stay readable.
+const onPicture = 'border-transparent bg-background/85 backdrop-blur'
+
+function PriceBadge({ event, className }: { event: Event; className?: string }) {
   const price = priceTags[event.price_status]
   if (!price) return null
   return (
     <Badge
       variant="outline"
-      className={
+      className={cn(
         event.price_status === 'free'
           ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
-          : 'text-muted-foreground'
-      }
+          : 'text-muted-foreground',
+        className,
+      )}
     >
       {price}
     </Badge>
@@ -31,32 +35,47 @@ function PriceBadge({ event }: { event: Event }) {
 }
 
 /** A category as a tinted icon with its name. */
-export function TopicBadge({ topic }: { topic: Topic }) {
+export function TopicBadge({ topic, className }: { topic: Topic; className?: string }) {
   return (
-    <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+    <Badge variant="outline" className={cn('gap-1 font-normal text-muted-foreground', className)}>
       {createElement(topic.icon, { style: { color: topic.color }, 'aria-hidden': true })}
       {topic.label}
     </Badge>
   )
 }
 
-/** A small tinted square with the category icon, standing in for a cover image. */
-function TopicIcon({ event, className }: { event: Event; className?: string }) {
+/** The calendar's picture of the event, or a cover in its topic's color when there's none. */
+export function Cover({
+  event,
+  className,
+  iconClassName,
+}: {
+  event: Event
+  className: string
+  iconClassName: string
+}) {
+  const [broken, setBroken] = useState(false)
+  if (event.image_url && !broken) {
+    return (
+      <img
+        src={event.image_url}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
+        className={cn('object-cover', className)}
+      />
+    )
+  }
   const topic = topicOf(event)
   return (
     <div
-      className={cn(
-        'flex size-8 shrink-0 items-center justify-center rounded-md border',
-        className,
-      )}
-      style={{
-        backgroundColor: `${topic.color}14`,
-        borderColor: `${topic.color}29`,
-        color: topic.color,
-      }}
+      className={cn('flex items-center justify-center', className)}
+      style={{ backgroundColor: `${topic.color}1a`, color: topic.color }}
       aria-hidden="true"
     >
-      {createElement(topic.icon, { className: 'size-4', strokeWidth: 1.75 })}
+      {createElement(topic.icon, { className: iconClassName, strokeWidth: 1.5 })}
     </div>
   )
 }
@@ -74,8 +93,8 @@ function Venue({ event }: { event: Event }) {
   )
 }
 
-/** One row in an event list; the whole row opens the event. Lists grouped by day pass no date. */
-export function EventRow({
+/** A picture card in an event grid; the whole card opens the event. Day-grouped grids pass no date. */
+export function EventTile({
   event,
   backTo,
   showDate = false,
@@ -85,21 +104,20 @@ export function EventRow({
   showDate?: boolean
 }) {
   const [now] = useState(Date.now)
-  const price = priceTags[event.price_status]
-  const blurb = event.summary || event.description
   return (
-    <article className="relative flex flex-col gap-1 px-4 py-3.5 transition-colors hover:bg-accent/40 has-[a:focus-visible]:bg-accent/40 sm:flex-row sm:gap-5">
-      <p
-        className={cn(
-          'shrink-0 text-xs text-muted-foreground tabular-nums sm:pt-0.5 sm:text-sm',
-          showDate ? 'sm:w-44' : 'sm:w-24',
-        )}
-      >
-        {whenLabel(event, now, showDate)}
-        {price && <span className="sm:hidden"> · {price}</span>}
-      </p>
-      <div className="min-w-0 flex-1">
-        <h3 className="text-sm leading-5 font-medium">
+    <article className="relative flex flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/40 has-[a:focus-visible]:ring-[3px] has-[a:focus-visible]:ring-ring/50">
+      <div className="relative">
+        <Cover event={event} className="aspect-video w-full" iconClassName="size-10" />
+        <div className="absolute top-2 left-2 flex gap-1.5">
+          {event.topics.length > 0 && <TopicBadge topic={topicOf(event)} className={onPicture} />}
+          <PriceBadge event={event} className={onPicture} />
+        </div>
+      </div>
+      <div className="flex flex-1 flex-col p-3.5">
+        <p className="text-xs font-medium text-primary tabular-nums">
+          {whenLabel(event, now, showDate)}
+        </p>
+        <h3 className="mt-1 line-clamp-2 text-sm leading-5 font-medium">
           <Link
             className="after:absolute after:inset-0 focus-visible:outline-none"
             to={`/events/${event.id}`}
@@ -108,17 +126,12 @@ export function EventRow({
             {event.title}
           </Link>
         </h3>
-        {blurb && <p className="mt-0.5 line-clamp-1 text-sm text-muted-foreground">{blurb}</p>}
-        <div className="mt-1.5">
+        <div className="mt-auto pt-2">
           <Venue event={event} />
         </div>
         {event.is_stale && (
-          <p className="mt-1.5 text-xs text-amber-400">Details may be out of date</p>
+          <p className="mt-1 text-xs text-amber-400">Details may be out of date</p>
         )}
-      </div>
-      <div className="hidden shrink-0 items-start gap-1.5 sm:flex">
-        {event.topics.length > 0 && <TopicBadge topic={topicOf(event)} />}
-        <PriceBadge event={event} />
       </div>
     </article>
   )
@@ -137,7 +150,7 @@ export function EventCard({
   const [now] = useState(Date.now)
   return (
     <article className="relative flex min-w-0 items-start gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-accent/40 has-[a:focus-visible]:ring-[3px] has-[a:focus-visible]:ring-ring/50">
-      <TopicIcon event={event} />
+      <Cover event={event} className="size-10 shrink-0 rounded-md border" iconClassName="size-4" />
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
           {number !== undefined && (

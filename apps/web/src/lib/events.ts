@@ -64,6 +64,11 @@ export function formatDate(
   }).format(new Date(dateOnly ? `${value}T12:00:00Z` : value))
 }
 
+/** "Oct 3" for one day, "Oct 3 – Nov 1" for a span; both dates are inclusive. */
+export function dateRange(start: string, end: string) {
+  return start === end ? formatDate(start) : `${formatDate(start)} – ${formatDate(end)}`
+}
+
 export function eventDate(event: Event) {
   const start = event.all_day ? event.start_date : event.starts_at
   if (!start) return 'Date to be announced'

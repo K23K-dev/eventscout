@@ -15,6 +15,7 @@ from app.ingestion.parsing import (
     CANCELLED_TITLE,
     cost_price,
     http_url,
+    image_url,
     issue_message,
     localize,
     registration_link,
@@ -94,7 +95,13 @@ def _earl_event(card: Tag) -> ParsedEvent:
         external_id=identifiers[0],
         content=content,
         source_updated_at=None,
-        raw_payload={"post_id": identifiers[0], "listing_html": str(card)},
+        raw_payload={
+            "post_id": identifiers[0],
+            "listing_html": str(card),
+            "image_url": image_url(
+                picture.get("src") if (picture := card.select_one("img")) else None
+            ),
+        },
     )
 
 

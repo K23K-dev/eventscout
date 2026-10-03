@@ -479,9 +479,6 @@ export function Ask() {
                 )}
               </Button>
             </form>
-            <p className="mt-2 hidden text-center text-xs text-muted-foreground sm:block">
-              Answers only use listed events. Check the details before you go.
-            </p>
           </div>
           {/* Scrolling here leaves the newest message just above the message box. */}
           <div ref={endRef} />

@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import CANCELLED_TITLE, localize, text
+from app.ingestion.parsing import CANCELLED_TITLE, image_url, localize, text
 from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -73,6 +73,9 @@ def _performance(card: Tag) -> ParsedEvent:
             "program_type": category,
             "performance_html": str(card),
             "source_url_is_collection": True,
+            "image_url": image_url(
+                picture.get("src") if (picture := card.select_one("img")) else None, CALENDAR_URL
+            ),
         },
     )
 

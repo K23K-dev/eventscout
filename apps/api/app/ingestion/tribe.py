@@ -18,6 +18,7 @@ from app.ingestion.parsing import (
     CANCELLED_TITLE,
     MEMBERS_ONLY,
     cost_price,
+    image_url,
     issue_message,
     location_kind,
     registration_link,
@@ -166,7 +167,10 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         registration_url=HttpUrl(registration) if registration else None,
         status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
-    raw_payload = {**event}
+    # WordPress publishes several sizes; the 768px one suits event cards.
+    image = event.get("image")
+    sizes = image.get("sizes", {}) if isinstance(image, dict) else {}
+    raw_payload = {**event, "image_url": image_url(sizes.get("medium_large") or image)}
     if ignored_end_reason is not None:
         raw_payload["ignored_end_reason"] = ignored_end_reason
     return ParsedEvent(str(identity), content, revision, raw_payload)

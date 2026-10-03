@@ -100,6 +100,7 @@ class EventResponse(EventContent):
     sources: list[EventSource]
     summary: str | None = Field(default=None, description="One-line summary written by enrichment.")
     topics: list[str] = Field(default_factory=list, description="1-3 enrichment Topic values.")
+    image_url: str | None = Field(default=None, description="A picture the calendar published.")
 
     @property
     def first_day(self) -> date | None:

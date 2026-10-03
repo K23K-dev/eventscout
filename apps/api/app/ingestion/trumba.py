@@ -17,6 +17,7 @@ from app.ingestion.parsing import (
     cost_price,
     described_price,
     http_url,
+    image_url,
     validation_message,
 )
 from app.ingestion.parsing import text as _text
@@ -153,7 +154,10 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
         external_id=str(event.eventID),
         content=content,
         source_updated_at=None,
-        raw_payload={"event": raw},
+        raw_payload={
+            "event": raw,
+            "image_url": image_url(raw.get("detailImage") or raw.get("eventImage")),
+        },
     )
 
 

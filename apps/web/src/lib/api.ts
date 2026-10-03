@@ -36,6 +36,7 @@ export interface Event {
   sources: EventSource[]
   summary: string | null
   topics: string[]
+  image_url: string | null
 }
 
 export interface EventPage {

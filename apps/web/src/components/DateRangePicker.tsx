@@ -2,7 +2,7 @@ import { CalendarDays } from 'lucide-react'
 import { useState } from 'react'
 import type { DateRange } from 'react-day-picker'
 import { cn } from '@/lib/utils'
-import { addDays, formatDate } from '@/lib/events'
+import { addDays, dateRange } from '@/lib/events'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -12,7 +12,7 @@ const toDate = (day: string) => new Date(`${day}T00:00:00`)
 const toDay = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 
-/** Pick any span up to 90 days; `end` is inclusive here and exclusive in what it applies. */
+/** Pick one day or a span up to 90 days; `end` is inclusive here and exclusive in what it applies. */
 export function DateRangePicker({
   start,
   end,
@@ -27,7 +27,9 @@ export function DateRangePicker({
   const [open, setOpen] = useState(false)
   const [range, setRange] = useState<DateRange | undefined>()
   const from = range?.from
-  const tooLong = !!(from && range?.to && toDay(range.to) > addDays(toDay(from), 89))
+  // A single click picks one day.
+  const to = range?.to ?? from
+  const tooLong = !!(from && to && toDay(to) > addDays(toDay(from), 89))
 
   return (
     <Popover
@@ -39,8 +41,7 @@ export function DateRangePicker({
     >
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" className={cn(custom && 'bg-accent text-primary')}>
-          <CalendarDays aria-hidden="true" />{' '}
-          {custom ? `${formatDate(start)} – ${formatDate(end)}` : 'Dates'}
+          <CalendarDays aria-hidden="true" /> {custom ? dateRange(start, end) : 'Dates'}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto p-0">
@@ -54,14 +55,14 @@ export function DateRangePicker({
         />
         <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5">
           <p className={cn('text-xs', tooLong ? 'text-destructive' : 'text-muted-foreground')}>
-            {tooLong ? 'Pick 90 days or fewer.' : 'Up to 90 days'}
+            {tooLong ? 'Pick 90 days or fewer.' : 'One day or up to 90'}
           </p>
           <Button
             size="sm"
-            disabled={!from || !range?.to || tooLong}
+            disabled={!from || !to || tooLong}
             onClick={() => {
               setOpen(false)
-              apply(toDay(from!), addDays(toDay(range!.to!), 1))
+              apply(toDay(from!), addDays(toDay(to!), 1))
             }}
           >
             Apply

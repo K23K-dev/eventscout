@@ -62,13 +62,6 @@
   --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
 }
 
-@utility scrollbar-none {
-  scrollbar-width: none;
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
