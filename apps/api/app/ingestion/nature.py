@@ -33,7 +33,7 @@ def _local_time(year: int, date_text: str, clock: str) -> datetime:
     return localize(datetime.strptime(f"{year} {date_text} {normalized}", pattern), EASTERN)
 
 
-def _tree_event(card: Tag, year: int, month: int, feed_url: str) -> ParsedEvent:
+def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
     anchor = card.find_parent("a", href=True)
     if anchor is None:
         raise ValueError("Missing event URL")
@@ -78,7 +78,6 @@ def _tree_event(card: Tag, year: int, month: int, feed_url: str) -> ParsedEvent:
         content,
         None,
         {
-            "feed_urls": [feed_url],
             "date_label": date_text,
             "time_label": time_text,
             "description_is_excerpt": True,
@@ -90,13 +89,12 @@ async def collect_trees(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Fetch the calendar's visible month filters; each returns that month's full list."""
-    result = SourceCollection([], 0, 0, [])
+    result = SourceCollection([], 0, [])
     current = window_start.astimezone(EASTERN).replace(day=1)
     last = window_end.astimezone(EASTERN)
     while (current.year, current.month) <= (last.year, last.month):
         feed_url = f"{TREES_URL}?month={current:%Y%m}"
         document = BeautifulSoup(await fetch_bytes(client, feed_url), "html.parser")
-        result.requests += 1
         if document.select_one("#events-filters") is None:
             raise ValueError("Unrecognized Trees Atlanta calendar")
         cards = document.select(".event")
@@ -107,7 +105,7 @@ async def collect_trees(
             try:
                 if "online store closes" in _text(card, "h3").casefold():
                     continue
-                event = _tree_event(card, current.year, current.month, feed_url)
+                event = _tree_event(card, current.year, current.month)
                 result.events.append(event)
             except ValueError as exc:
                 result.issues.append(ParseIssue(None, str(exc)))
@@ -160,7 +158,7 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
         urlsplit(url).path,
         content,
         None,
-        {"feed_urls": [SOUTH_FORK_URL], "calendar_dates": query["dates"][0]},
+        {"calendar_dates": query["dates"][0]},
     )
 
 
@@ -171,7 +169,7 @@ async def collect_south_fork(
     cards = document.select("article.eventlist-event")
     if not cards and document.select_one(".eventlist") is None:
         raise ValueError("Unrecognized South Fork Conservancy calendar")
-    result = SourceCollection([], len(cards), 1, [])
+    result = SourceCollection([], len(cards), [])
     for card in cards:
         try:
             event = _south_fork_event(card)

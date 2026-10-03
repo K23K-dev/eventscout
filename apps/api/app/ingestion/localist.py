@@ -211,7 +211,6 @@ async def collect(
     return SourceCollection(
         events=[event for event in parsed.events if _discovery_event(event)],
         records_seen=parsed.records_seen,
-        requests=1,
         issues=parsed.issues,
         warnings=[
             f"Public subscription export contains {parent_count:,} parent events and "

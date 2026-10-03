@@ -146,7 +146,7 @@ async def collect(
     Library's Atlanta timezone. Missing fees and audience restrictions remain unknown.
     Individual failures are returned as issues so a partial import cannot look complete.
     """
-    result = SourceCollection(events=[], records_seen=0, requests=0, issues=[])
+    result = SourceCollection(events=[], records_seen=0, issues=[])
     listings: dict[str, str] = {}
     visited: set[str] = set()
     next_url: str | None = LISTING_URL
@@ -155,7 +155,6 @@ async def collect(
             result.issues.append(ParseIssue(None, "Library pagination repeats an earlier page"))
             break
         visited.add(next_url)
-        result.requests += 1
         try:
             html = await fetch_bytes(client, next_url)
             soup = BeautifulSoup(html, "html.parser")
@@ -191,7 +190,6 @@ async def collect(
 
     async def detail(url: str, venue: str) -> ParsedEvent | ParseIssue:
         async with semaphore:
-            result.requests += 1
             try:
                 return _parse_detail(await fetch_bytes(client, url), url, venue)
             except (httpx.HTTPError, TimeoutError, ValueError) as exc:

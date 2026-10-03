@@ -20,7 +20,7 @@ def main() -> int:
         "--source",
         action="append",
         choices=list(SOURCES),
-        help="import one calendar; repeat to select several (default: enabled calendars)",
+        help="import one calendar; repeat to select several (default: all calendars)",
     )
     parser.add_argument(
         "--days", type=int, default=90, help="rolling window, 1–90 days (default: 90)"
@@ -32,9 +32,7 @@ def main() -> int:
     if not 1 <= args.days <= 90:
         parser.error("--days must be between 1 and 90")
     settings = Settings()
-    if not args.dry_run and (
-        settings.database_url is None or not settings.database_url.get_secret_value().strip()
-    ):
+    if not args.dry_run and settings.missing("database_url"):
         parser.error("set EVENTSCOUT_DATABASE_URL in apps/api/.env, or use --dry-run")
     try:
         # Psycopg's async connections require a selector loop on Windows.

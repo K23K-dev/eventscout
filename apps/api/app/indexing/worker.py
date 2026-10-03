@@ -78,16 +78,13 @@ def event_bounds(content: EventContent) -> tuple[datetime, datetime] | None:
 
 def vector_metadata(content: EventContent, bounds: tuple[datetime, datetime]) -> dict[str, Any]:
     """Coarse filters for dense search; Postgres rechecks every hard filter afterwards."""
-    metadata: dict[str, Any] = {
+    return {
         "starts_at": int(bounds[0].timestamp()),
         "ends_at": int(bounds[1].timestamp()),
         "region": content.region,
         "price_status": content.price_status,
         "location_kind": content.location_kind,
     }
-    if content.audience:
-        metadata["audience"] = [label.casefold() for label in content.audience]
-    return metadata
 
 
 async def requeue(

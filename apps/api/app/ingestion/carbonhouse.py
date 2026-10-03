@@ -166,7 +166,6 @@ def _parse_detail(
                     "showing_id": identity,
                     "showing_html": str(showing),
                     "url": url,
-                    "feed_urls": [calendar_url],
                     "event_schema": schema,
                 },
             )
@@ -188,14 +187,13 @@ async def collect(
     Stable showing IDs keep separate performances distinct without treating a
     multiweek production's first and last dates as one continuous event.
     """
-    result = SourceCollection([], 0, 0, [])
+    result = SourceCollection([], 0, [])
     parts = urlsplit(calendar_url)
     origin = f"{parts.scheme}://{parts.netloc}"
     current = window_start.astimezone(_ZONE).replace(day=1)
     last = window_end.astimezone(_ZONE).replace(day=1)
     urls: set[str] = set()
     while (current.year, current.month) <= (last.year, last.month):
-        result.requests += 1
         try:
             data = json.loads(
                 await fetch_bytes(
@@ -238,7 +236,6 @@ async def collect(
 
     async def detail(url: str) -> tuple[list[ParsedEvent], list[str]] | ParseIssue:
         async with semaphore:
-            result.requests += 1
             try:
                 return _parse_detail(
                     await fetch_bytes(client, url), url, calendar_url, default_venue, window_start

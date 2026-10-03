@@ -31,7 +31,6 @@ export interface Event {
   registration_url: string | null
   status: 'scheduled' | 'cancelled'
   content_version: number
-  last_observed_at: string
   last_verified_at: string | null
   is_stale: boolean
   sources: EventSource[]

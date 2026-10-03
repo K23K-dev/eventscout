@@ -39,7 +39,6 @@ class SourceCollection:
 
     events: list[ParsedEvent]
     records_seen: int
-    requests: int
     issues: list[ParseIssue]
     warnings: list[str] = field(default_factory=list)
 

@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   CalendarDays,
   CalendarPlus,
-  Download,
   Globe,
   Link2,
   MapPin,
@@ -21,7 +20,6 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   calendarDate,
-  calendarFile,
   checkedAt,
   eventDate,
   formatDate,
@@ -123,21 +121,6 @@ function EventInformation({ event }: { event: Event }) {
     : event.registration_url
       ? 'Get tickets'
       : 'Go to event page'
-
-  function download() {
-    const file = calendarFile(event)
-    if (!file) return
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(file)
-    link.download = `${
-      event.title
-        .replace(/[^\w -]+/g, '')
-        .trim()
-        .slice(0, 60) || 'event'
-    }.ics`
-    link.click()
-    URL.revokeObjectURL(link.href)
-  }
 
   async function share() {
     try {
@@ -246,26 +229,14 @@ function EventInformation({ event }: { event: Event }) {
                   </a>
                 </Button>
               )}
-              <div className="grid grid-cols-2 gap-2">
-                {google && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground"
-                    onClick={download}
-                  >
-                    <Download aria-hidden="true" /> .ics file
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground first:last:col-span-2"
-                  onClick={() => void share()}
-                >
-                  <Link2 aria-hidden="true" /> Copy link
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={() => void share()}
+              >
+                <Link2 aria-hidden="true" /> Copy link
+              </Button>
             </div>
             <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">
               Details can change. Confirm the time and access before heading out.

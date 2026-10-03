@@ -68,13 +68,6 @@ class EventFilters(BaseModel):
     venue: str | None = Field(
         default=None, max_length=200, description="Literal, case-insensitive venue substring."
     )
-    audience: str | None = Field(
-        default=None,
-        max_length=100,
-        description=(
-            "Exact source-provided audience label, case-insensitive; no inferred eligibility."
-        ),
-    )
     topic: Topic | None = Field(default=None, description="Only events enrichment tagged with it.")
     sort: Literal["relevance", "start_time"] = Field(
         default="relevance",
@@ -101,9 +94,6 @@ class EventSource(SourceInput):
 class EventResponse(EventContent):
     id: UUID
     content_version: int
-    last_observed_at: AwareDatetime = Field(
-        description="Most recent observation across enabled sources, not an event content change."
-    )
     last_verified_at: AwareDatetime | None = Field(
         default=None, description="Last verification by the source supplying the event details."
     )

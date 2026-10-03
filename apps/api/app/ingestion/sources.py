@@ -21,8 +21,6 @@ from app.ingestion import (
     localist,
     nature,
     puppetry,
-    sports,
-    tag,
     tech_village,
     tribe,
     trumba,
@@ -189,14 +187,6 @@ SOURCES = {
             culture.collect_earl,
         ),
         _source(
-            "tag",
-            "Technology Association of Georgia",
-            "TAG Events",
-            "https://members.tagonline.org/calendar",
-            15,
-            tag.collect,
-        ),
-        _source(
             "fernbank-museum",
             "Fernbank Museum",
             "Fernbank Museum Events",
@@ -241,14 +231,6 @@ SOURCES = {
                     }
                 ),
             ),
-        ),
-        _source(
-            "atlanta-falcons",
-            "Atlanta Falcons",
-            "Atlanta Falcons Home Games",
-            sports.FALCONS_URL,
-            20,
-            sports.collect_falcons,
         ),
         _source(
             "norcross",

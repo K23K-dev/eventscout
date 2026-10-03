@@ -92,7 +92,7 @@ def _price(cost: str, payment_required: bool, description: str) -> tuple[PriceSt
     return described_price(description)
 
 
-def _parse_item(raw: dict[str, JsonValue], feed_url: str) -> ParsedEvent:
+def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
     event = _Event.model_validate(raw)
     fields: dict[str, str] = {}
     for field in event.customFields:
@@ -153,11 +153,11 @@ def _parse_item(raw: dict[str, JsonValue], feed_url: str) -> ParsedEvent:
         external_id=str(event.eventID),
         content=content,
         source_updated_at=None,
-        raw_payload={"event": raw, "feed_urls": [feed_url]},
+        raw_payload={"event": raw},
     )
 
 
-def parse_feed(payload: bytes, *, feed_url: str = FEED_URL) -> ParsedFeed:
+def parse_feed(payload: bytes) -> ParsedFeed:
     """Normalize source fields without turning registration defaults into prices."""
     try:
         records = _JSON_EVENTS.validate_json(payload)
@@ -167,7 +167,7 @@ def parse_feed(payload: bytes, *, feed_url: str = FEED_URL) -> ParsedFeed:
     for raw in records:
         external_id = str(raw["eventID"]) if "eventID" in raw else None
         try:
-            result.events.append(_parse_item(raw, feed_url))
+            result.events.append(_parse_item(raw))
         except ValidationError as exc:
             result.issues.append(ParseIssue(external_id, validation_message(exc)))
         except ValueError as exc:
@@ -206,12 +206,11 @@ async def collect(
             "previousweeks": "0",
             "events": str(_PAGE_LIMIT),
         }
-        url = str(httpx.URL(FEED_URL, params=params))
-        result = SourceCollection(events=[], records_seen=0, requests=1, issues=[])
+        result = SourceCollection(events=[], records_seen=0, issues=[])
         try:
             async with semaphore:
                 payload = await fetch_bytes(client, FEED_URL, params=params)
-            parsed = parse_feed(payload, feed_url=url)
+            parsed = parse_feed(payload)
         except (httpx.HTTPError, TimeoutError, ValueError) as exc:
             reason = (
                 f"HTTP {exc.response.status_code}"
@@ -228,7 +227,6 @@ async def collect(
             for child in children:
                 result.events.extend(child.events)
                 result.records_seen += child.records_seen
-                result.requests += child.requests
                 result.issues.extend(child.issues)
             return result
         result.events = parsed.events
@@ -246,6 +244,5 @@ async def collect(
     return SourceCollection(
         events=[event for collection in collections for event in collection.events],
         records_seen=sum(collection.records_seen for collection in collections),
-        requests=sum(collection.requests for collection in collections),
         issues=[issue for collection in collections for issue in collection.issues],
     )

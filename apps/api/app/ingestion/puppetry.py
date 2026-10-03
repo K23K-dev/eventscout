@@ -2,14 +2,13 @@
 
 import asyncio
 import re
-from dataclasses import replace
 from datetime import datetime
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from pydantic import HttpUrl, JsonValue
+from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import CANCELLED_TITLE, localize, text
@@ -36,7 +35,7 @@ def _link(card: Tag, selector: str) -> str:
     return url
 
 
-def _performance(card: Tag, feed_url: str) -> ParsedEvent:
+def _performance(card: Tag) -> ParsedEvent:
     booking = _link(card, "a.calendar-event-popover__primary[href]")
     # The publisher uses these persistent Spektrix performance references in its
     # booking links. Calendar DOM IDs contain a date/index and are not identities.
@@ -74,12 +73,11 @@ def _performance(card: Tag, feed_url: str) -> ParsedEvent:
             "program_type": category,
             "performance_html": str(card),
             "source_url_is_collection": True,
-            "feed_urls": [feed_url],
         },
     )
 
 
-def _month(html: bytes, month: datetime, feed_url: str) -> ParsedFeed:
+def _month(html: bytes, month: datetime) -> ParsedFeed:
     soup = BeautifulSoup(html, "html.parser")
     if soup.select_one(".calendar-shell") is None or not any(
         heading.get_text(" ", strip=True) == month.strftime("%B %Y")
@@ -97,7 +95,7 @@ def _month(html: bytes, month: datetime, feed_url: str) -> ParsedFeed:
         if category not in _ACTIVITIES:
             continue
         try:
-            result.events.append(_performance(card, feed_url))
+            result.events.append(_performance(card))
         except (ValueError, TypeError) as exc:
             result.issues.append(ParseIssue(_text(card, "h3") or None, str(exc)))
     return result
@@ -107,24 +105,24 @@ async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Read each public month once, respecting the publisher's 30-second delay."""
-    result = SourceCollection([], 0, 0, [])
+    result = SourceCollection([], 0, [])
     current = window_start.astimezone(_ZONE).replace(day=1)
     last = window_end.astimezone(_ZONE).replace(day=1)
     if (last.year - current.year) * 12 + last.month - current.month > 3:
         raise ValueError("Puppetry calendar collection is limited to a 90-day window")
     events: dict[str, ParsedEvent] = {}
     conflicts: set[str] = set()
+    first = current
     while (current.year, current.month) <= (last.year, last.month):
-        if result.requests:
+        if current != first:
             await asyncio.sleep(30)
         day = current.strftime("%Y-%m-01")
         feed_url = (
             f"{CALENDAR_URL}?display=month&month={day}&day={day}"
             "&audience=all&eventType=all&timeOfDay=all&accessibility=all"
         )
-        result.requests += 1
         try:
-            parsed = _month(await fetch_bytes(client, feed_url), current, feed_url)
+            parsed = _month(await fetch_bytes(client, feed_url), current)
             result.records_seen += parsed.records_seen
             result.issues.extend(parsed.issues)
             for event in parsed.events:
@@ -139,14 +137,6 @@ async def collect(
                         conflicts.add(event.external_id)
                         events.pop(event.external_id)
                         continue
-                    prior_urls = prior.raw_payload.get("feed_urls", [])
-                    known_urls = (
-                        {url for url in prior_urls if isinstance(url, str)}
-                        if isinstance(prior_urls, list)
-                        else set()
-                    )
-                    urls: list[JsonValue] = [url for url in sorted(known_urls | {feed_url})]
-                    event = replace(event, raw_payload={**event.raw_payload, "feed_urls": urls})
                 events[event.external_id] = event
         except (httpx.HTTPError, TimeoutError, ValueError) as exc:
             result.issues.append(

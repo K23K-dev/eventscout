@@ -13,33 +13,22 @@ _PUBLIC_COLUMNS = sql.SQL(", ").join(
     sql.Identifier("e", name)
     for name in ("id", "content_version", "last_verified_at", *EventContent.model_fields)
 )
+# The calendars listing each event, and its AI summary and topics.
 _SOURCE_DETAILS = sql.SQL("""
     JOIN LATERAL (
-        SELECT max(r.observed_at) AS last_observed_at,
-               jsonb_agg(jsonb_build_object(
+        SELECT jsonb_agg(jsonb_build_object(
                    'slug', s.slug, 'publisher', s.publisher, 'name', s.name, 'url', s.url
                ) ORDER BY s.slug) AS sources
-        FROM (
-            SELECT source_id, max(observed_at) AS observed_at
-            FROM eventscout.source_records WHERE event_id = e.id GROUP BY source_id
-        ) r JOIN eventscout.sources s ON s.id = r.source_id
-        WHERE s.slug = ANY(%(enabled_sources)s)
-    ) provenance ON provenance.last_observed_at IS NOT NULL
+        FROM eventscout.sources s
+        WHERE s.id IN (SELECT source_id FROM eventscout.source_records WHERE event_id = e.id)
+    ) provenance ON provenance.sources IS NOT NULL
     LEFT JOIN LATERAL (
         SELECT summary, topics FROM eventscout.event_enrichments
         WHERE content_hash = e.content_hash ORDER BY prompt_version DESC LIMIT 1
     ) enrichment ON true
 """)
-_ENABLED_EVENT = sql.SQL("""
-    EXISTS (
-        SELECT 1 FROM eventscout.source_records r
-        JOIN eventscout.sources s ON s.id = r.source_id
-        WHERE r.event_id = e.id AND s.slug = ANY(%(enabled_sources)s)
-    )
-""")
 _DETAIL_COLUMNS = sql.SQL(
-    "provenance.last_observed_at, provenance.sources, "
-    "enrichment.summary, COALESCE(enrichment.topics, '{}') AS topics"
+    "provenance.sources, enrichment.summary, COALESCE(enrichment.topics, '{}') AS topics"
 )
 _START_TIME = sql.SQL("""
     CASE WHEN e.all_day THEN e.start_date::timestamp AT TIME ZONE e.timezone
@@ -48,11 +37,8 @@ _START_TIME = sql.SQL("""
 
 
 class EventRepository:
-    def __init__(
-        self, connection: AsyncConnection[dict[str, Any]], enabled_sources: tuple[str, ...]
-    ) -> None:
+    def __init__(self, connection: AsyncConnection[dict[str, Any]]) -> None:
         self._connection = connection
-        self._enabled_sources = enabled_sources
 
     async def search(self, filters: EventFilters) -> EventPage:
         where, parameters = self._search_conditions(filters)
@@ -120,7 +106,7 @@ class EventRepository:
                     WHERE id = %(id)s
                 )
             """).format(_PUBLIC_COLUMNS, _DETAIL_COLUMNS, _SOURCE_DETAILS),
-            {"id": event_id, "enabled_sources": list(self._enabled_sources)},
+            {"id": event_id},
         )
         row = await cursor.fetchone()
         return EventResponse.model_validate(row) if row is not None else None
@@ -135,7 +121,7 @@ class EventRepository:
                 FROM eventscout.event_occurrences e {} WHERE e.id = ANY(%(ids)s)
                 ORDER BY array_position(%(ids)s::uuid[], e.id)
             """).format(_PUBLIC_COLUMNS, _DETAIL_COLUMNS, _SOURCE_DETAILS),
-            {"ids": event_ids, "enabled_sources": list(self._enabled_sources)},
+            {"ids": event_ids},
         )
         return [EventResponse.model_validate(row) for row in await cursor.fetchall()]
 
@@ -155,13 +141,11 @@ class EventRepository:
 
     def _search_conditions(self, filters: EventFilters) -> tuple[sql.Composed, dict[str, Any]]:
         parameters: dict[str, Any] = {
-            "enabled_sources": list(self._enabled_sources),
             "window_start": datetime.combine(filters.date_from, time.min, CATALOG_TIMEZONE),
             "window_end": datetime.combine(filters.end_date, time.min, CATALOG_TIMEZONE),
         }
         clauses: list[sql.Composable] = [
             sql.SQL("e.merged_into IS NULL AND e.status = 'scheduled'"),
-            _ENABLED_EVENT,
             sql.SQL("""
                 CASE WHEN e.all_day THEN
                     (e.start_date::timestamp AT TIME ZONE e.timezone) < %(window_end)s AND
@@ -196,12 +180,4 @@ class EventRepository:
         if filters.venue:
             parameters["venue"] = filters.venue
             clauses.append(sql.SQL("strpos(lower(e.venue), lower(%(venue)s)) > 0"))
-        if filters.audience:
-            parameters["audience"] = filters.audience
-            clauses.append(
-                sql.SQL("""
-                    EXISTS (SELECT 1 FROM unnest(e.audience) AS labels(label)
-                            WHERE lower(label) = lower(%(audience)s))
-                """)
-            )
         return sql.SQL(" AND ").join(clauses), parameters

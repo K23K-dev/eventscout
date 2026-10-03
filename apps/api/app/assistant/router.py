@@ -95,9 +95,7 @@ class StartedTurn:
     replay: TurnAnswer | None = None
 
 
-def create_assistant_router(
-    settings: Settings, enabled_sources: tuple[str, ...], clients: AssistantClients
-) -> APIRouter:
+def create_assistant_router(settings: Settings, clients: AssistantClients) -> APIRouter:
     router = APIRouter(
         prefix="/api",
         tags=["assistant"],
@@ -153,7 +151,7 @@ def create_assistant_router(
     async def start_turn(request: TurnRequest, owner: Owner, connection: Connection) -> StartedTurn:
         """Everything that can fail with a status code, before streaming begins."""
         store = ConversationStore(connection, owner)
-        repository = EventRepository(connection, enabled_sources)
+        repository = EventRepository(connection)
         if (stored := await store.find_turn(request.request_id)) is not None:
             if stored["status"] == "running":
                 raise HTTPException(status_code=409, detail="That message is still being answered.")
@@ -216,7 +214,7 @@ def create_assistant_router(
                 store = ConversationStore(connection, started.owner)
                 try:
                     openai, index = await clients.get()
-                    repository = EventRepository(connection, enabled_sources)
+                    repository = EventRepository(connection)
                     services = Services(
                         connection, repository, openai, index, settings.openai_model
                     )
@@ -327,7 +325,7 @@ def create_assistant_router(
             raise HTTPException(status_code=404, detail="Conversation not found.")
         rows = await store.turns(conversation_id)
         ids = list(dict.fromkeys(card for row in rows for card in row["cards"]))
-        repository = EventRepository(connection, enabled_sources)
+        repository = EventRepository(connection)
         events = {event.id: event for event in await repository.get_by_ids(ids)}
         turns = [
             TurnView(

@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-const keys = ['region', 'price_status', 'location_kind', 'venue', 'audience'] as const
+const keys = ['region', 'price_status', 'location_kind', 'venue'] as const
 type Values = Record<(typeof keys)[number], string>
 
 // Select items can't have an empty value, so "any" stands for no filter.
@@ -50,7 +50,7 @@ function Field({ id, label, children }: { id: string; label: string; children: R
   )
 }
 
-/** Everything beyond the quick toggles: area, price, format, venue, and audience. */
+/** Everything beyond the quick toggles: area, price, format, and venue. */
 export function Filters({
   params,
   apply,
@@ -122,20 +122,6 @@ export function Filters({
                 placeholder="e.g. Piedmont Park"
                 maxLength={200}
               />
-            </Field>
-            <Field id="filter-audience" label="Audience">
-              <Input
-                id="filter-audience"
-                className="h-8"
-                value={values.audience}
-                onChange={event => set('audience')(event.target.value)}
-                placeholder="e.g. Students"
-                maxLength={100}
-                aria-describedby="audience-hint"
-              />
-              <p id="audience-hint" className="text-xs text-muted-foreground">
-                Matches an event’s exact audience label.
-              </p>
             </Field>
           </div>
           <div className="flex items-center justify-between border-t px-4 py-3">

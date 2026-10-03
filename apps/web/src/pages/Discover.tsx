@@ -46,7 +46,6 @@ const filterKeys = [
   'price_status',
   'location_kind',
   'venue',
-  'audience',
   'topic',
   'sort',
   'page',

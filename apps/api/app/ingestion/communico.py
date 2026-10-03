@@ -3,11 +3,9 @@
 import asyncio
 import base64
 import json
-from dataclasses import replace
 from datetime import datetime
 
 import httpx
-from pydantic import JsonValue
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.icalendar_feed import parse_feed
@@ -61,13 +59,12 @@ async def collect(
         if not identity.isdecimal() or not name or identity in branches:
             raise ValueError("Missing or repeated library location identity")
         branches[identity] = name
-    result = SourceCollection(events=[], records_seen=0, requests=1, issues=[])
+    result = SourceCollection(events=[], records_seen=0, issues=[])
     merged: dict[str, ParsedEvent] = {}
     conflicts: set[str] = set()
     # All-events also catches an event whose location has not reached metadata yet.
     for location_id, name in {"all": "All locations", **branches}.items():
         await asyncio.sleep(1)
-        result.requests += 1
         try:
             data = await fetch_bytes(client, f"{base}/feeds", params=_feed_params(location_id))
             parsed = parse_feed(
@@ -94,18 +91,7 @@ async def collect(
             if previous is not None and previous.content != event.content:
                 conflicts.add(event.external_id)
                 continue
-            feed_url = str(httpx.URL(f"{base}/feeds", params=_feed_params(location_id)))
-            prior_urls = previous.raw_payload.get("feed_urls", []) if previous else []
-            urls = (
-                [value for value in prior_urls if isinstance(value, str)]
-                if isinstance(prior_urls, list)
-                else []
-            )
-            feed_urls: list[JsonValue] = list(sorted(set([*urls, feed_url])))
-            merged[event.external_id] = replace(
-                event,
-                raw_payload={**event.raw_payload, "feed_urls": feed_urls},
-            )
+            merged[event.external_id] = event
     result.issues.extend(
         ParseIssue(identity, "Conflicting versions across branch subscriptions")
         for identity in sorted(conflicts)

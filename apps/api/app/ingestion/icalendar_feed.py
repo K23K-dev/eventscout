@@ -3,7 +3,6 @@
 import re
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -208,10 +207,7 @@ async def collect(
     require_metro_venue: bool = False,
 ) -> SourceCollection:
     parsed = parse_feed(await fetch_bytes(client, url), fallback_url=source_page)
-    events = [
-        replace(event, raw_payload={**event.raw_payload, "feed_urls": [url]})
-        for event in parsed.events
-    ]
+    events = parsed.events
     if require_metro_venue:
         # The radio calendar also advertises travel to national hamfests. Retain
         # explicit Atlanta-metro venues; ambiguous statewide activities stay out.
@@ -228,6 +224,5 @@ async def collect(
     return SourceCollection(
         events=events,
         records_seen=parsed.records_seen,
-        requests=1,
         issues=parsed.issues,
     )

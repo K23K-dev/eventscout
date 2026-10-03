@@ -2,14 +2,13 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import httpx
 from psycopg import AsyncConnection
-from pydantic import JsonValue
 
 from app.database import connect_database
 from app.ingestion.matching import CatalogRecord, EventGroup, Observation, group_events
@@ -26,7 +25,6 @@ logger = logging.getLogger(__name__)
 class SourceReport:
     source: str
     publisher: str
-    requests: int = 0
     records_seen: int = 0
     eligible_records: int = 0
     created: int = 0
@@ -77,7 +75,6 @@ async def _collect(
         if isinstance(collection, BaseException):
             summary.issues.append(f"Collection failed ({type(collection).__name__})")
             continue
-        summary.requests = collection.requests
         summary.records_seen = collection.records_seen
         summary.issues.extend(
             f"{issue.external_id or 'feed'}: {issue.message}" for issue in collection.issues
@@ -101,15 +98,7 @@ async def _collect(
                 newest,
                 key=lambda event: event.source_updated_at or datetime.min.replace(tzinfo=UTC),
             )
-            urls: set[str] = set()
-            for event in versions:
-                raw_urls = event.raw_payload.get("feed_urls", [])
-                if isinstance(raw_urls, list):
-                    urls.update(url for url in raw_urls if isinstance(url, str))
-            feed_urls: list[JsonValue] = list(sorted(urls))
-            events.append(
-                replace(chosen, raw_payload={**chosen.raw_payload, "feed_urls": feed_urls})
-            )
+            events.append(chosen)
         summary.eligible_records = sum(in_window(event.content, start, end) for event in events)
         logger.info("%s: %s eligible records", source.config.name, summary.eligible_records)
         observations.extend(
@@ -203,28 +192,19 @@ async def catalog_metrics(
     connection: AsyncConnection[dict[str, Any]], start: datetime, end: datetime
 ) -> dict[str, int]:
     cursor = await connection.execute(
-        """WITH active_records AS (
-             SELECT r.event_id, r.source_id
-             FROM eventscout.source_records r JOIN eventscout.sources s ON s.id = r.source_id
-             WHERE s.slug = ANY(%(enabled_sources)s)
-           ), live AS (
-             SELECT id FROM eventscout.event_occurrences e
+        """WITH live AS (
+             SELECT id FROM eventscout.event_occurrences
              WHERE merged_into IS NULL AND status = 'scheduled' AND CASE WHEN all_day THEN
                (start_date::timestamp AT TIME ZONE timezone) < %(end)s AND
                (COALESCE(end_date, start_date + 1)::timestamp AT TIME ZONE timezone) > %(start)s
              ELSE starts_at < %(end)s AND COALESCE(ends_at > %(start)s, starts_at >= %(start)s) END
-             AND EXISTS (SELECT 1 FROM active_records r WHERE r.event_id = e.id)
-           ) SELECT (SELECT count(*) FROM live) AS upcoming_unique_events,
+           ) SELECT count(DISTINCT live.id) AS upcoming_unique_events,
              count(DISTINCT r.source_id) AS calendars,
              count(DISTINCT s.publisher) AS publishers,
              count(*) AS source_records
-           FROM active_records r JOIN live ON live.id = r.event_id
+           FROM live JOIN eventscout.source_records r ON r.event_id = live.id
            JOIN eventscout.sources s ON s.id = r.source_id""",
-        {
-            "start": start,
-            "end": end,
-            "enabled_sources": list(SOURCES),
-        },
+        {"start": start, "end": end},
     )
     row = await cursor.fetchone()
     assert row is not None

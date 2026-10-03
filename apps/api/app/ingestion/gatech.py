@@ -3,7 +3,6 @@
 import asyncio
 import re
 from collections import Counter
-from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from html import unescape
 from urllib.parse import urljoin, urlsplit
@@ -11,7 +10,7 @@ from xml.etree import ElementTree
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from pydantic import HttpUrl, JsonValue, ValidationError
+from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
@@ -69,7 +68,7 @@ async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Every category view's records; the import keeps each event's newest version."""
-    result = SourceCollection(events=[], records_seen=0, requests=0, issues=[])
+    result = SourceCollection(events=[], records_seen=0, issues=[])
     semaphore = asyncio.Semaphore(2)
 
     async def download(term: int) -> bytes | Exception:
@@ -82,9 +81,7 @@ async def collect(
                 return exc
 
     responses = await asyncio.gather(*(download(term) for term in FEEDS.values()))
-    for (name, term), response in zip(FEEDS.items(), responses, strict=True):
-        result.requests += 1
-        url = f"https://calendar.gatech.edu/taxonomy/term/{term}/feed"
+    for name, response in zip(FEEDS, responses, strict=True):
         if isinstance(response, Exception):
             if name == "student":
                 result.warnings.append(
@@ -109,7 +106,6 @@ async def collect(
             continue
         result.records_seen += parsed.records_seen
         result.issues.extend(parsed.issues)
-        feed_urls: list[JsonValue] = [url]
         for event in parsed.events:
             if re.search(
                 r"\b(?:application|grade substitution|withdrawal|progress report) deadline\b",
@@ -122,9 +118,7 @@ async def collect(
                 re.I,
             ):
                 continue
-            result.events.append(
-                replace(event, raw_payload={**event.raw_payload, "feed_urls": feed_urls})
-            )
+            result.events.append(event)
     return result
 
 

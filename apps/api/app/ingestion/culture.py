@@ -94,7 +94,7 @@ def _earl_event(card: Tag) -> ParsedEvent:
         external_id=identifiers[0],
         content=content,
         source_updated_at=None,
-        raw_payload={"post_id": identifiers[0], "listing_html": str(card), "feed_urls": [_EARL]},
+        raw_payload={"post_id": identifiers[0], "listing_html": str(card)},
     )
 
 
@@ -102,7 +102,7 @@ async def collect_earl(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Read the venue's public show pages with its requested ten-second crawl delay."""
-    result = SourceCollection([], 0, 0, [])
+    result = SourceCollection([], 0, [])
     next_url: str | None = _EARL
     visited: set[str] = set()
     seen: set[str] = set()
@@ -113,7 +113,6 @@ async def collect_earl(
         if visited:
             await asyncio.sleep(10)
         visited.add(next_url)
-        result.requests += 1
         try:
             soup = BeautifulSoup(await fetch_bytes(client, next_url), "html.parser")
             cards = soup.select(".cl-layout__item")
@@ -214,7 +213,6 @@ def _fernbank_event(html: bytes, url: str, card: Tag) -> ParsedEvent:
         raw_payload={
             "url": url,
             "detail_html": str(article),
-            "feed_urls": [_FERNBANK],
             "listing_only": listing_only,
             "invalid_published_end": invalid_end,
         },
@@ -225,7 +223,7 @@ async def collect_fernbank(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Read the official calendar and its event detail permalinks, two at a time."""
-    result = SourceCollection([], 0, 1, [])
+    result = SourceCollection([], 0, [])
     try:
         soup = BeautifulSoup(await fetch_bytes(client, _FERNBANK), "html.parser")
         cards = {
@@ -248,7 +246,6 @@ async def collect_fernbank(
 
     async def detail(url: str, card: Tag | None) -> ParsedEvent | ParseIssue:
         async with semaphore:
-            result.requests += 1
             try:
                 assert card is not None
                 return _fernbank_event(await fetch_bytes(client, url), url, card)

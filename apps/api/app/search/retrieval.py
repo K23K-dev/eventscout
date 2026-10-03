@@ -45,8 +45,6 @@ def vector_filter(filters: EventFilters) -> dict[str, Any]:
         value = getattr(filters, name)
         if value is not None:
             clauses[name] = {"$eq": value}
-    if filters.audience:
-        clauses["audience"] = {"$in": [filters.audience.casefold()]}
     return clauses
 
 

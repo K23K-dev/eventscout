@@ -157,7 +157,6 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
             "venue_html": str(venue_node) if venue_node else None,
             "description_html": str(description_node) if description_node else None,
             "registration_url": registration,
-            "feed_urls": [LISTING_URL],
         },
     )
 
@@ -165,7 +164,7 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
 async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
-    result = SourceCollection(events=[], records_seen=0, requests=0, issues=[])
+    result = SourceCollection(events=[], records_seen=0, issues=[])
     listings: dict[str, _Listing] = {}
     url: str | None = LISTING_URL
     seen: set[str] = set()
@@ -175,7 +174,6 @@ async def collect(
             result.issues.append(ParseIssue(None, "Event listing pagination did not terminate"))
             break
         seen.add(url)
-        result.requests += 1
         try:
             page, issues, next_url = _listing(await fetch_bytes(client, url))
         except (httpx.HTTPError, TimeoutError, ValueError) as exc:
@@ -197,7 +195,6 @@ async def collect(
         try:
             async with semaphore:
                 await asyncio.sleep(0.5)
-                result.requests += 1
                 html = await fetch_bytes(client, item.url)
             return _parse_detail(html, item)
         except ValidationError:

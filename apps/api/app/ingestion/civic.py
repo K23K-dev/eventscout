@@ -31,7 +31,7 @@ CALENDARS: dict[City, tuple[str, int]] = {
 }
 
 
-def _parse(event: Component, base: str, feed_url: str) -> ParsedEvent:
+def _parse(event: Component, base: str) -> ParsedEvent:
     identity = str(event.get("UID", ""))
     if not re.fullmatch(r"\d+", identity):
         raise ValueError("Missing stable CivicEngage event ID")
@@ -99,7 +99,6 @@ def _parse(event: Component, base: str, feed_url: str) -> ParsedEvent:
         source_updated_at=updated,
         raw_payload={
             "icalendar": event.to_ical().decode("utf-8"),
-            "feed_urls": [feed_url],
         },
     )
 
@@ -173,7 +172,7 @@ async def collect(
     """One official event category per city, with each dated occurrence kept distinct."""
     base, category = CALENDARS[city]
     feed_url = f"{base}/common/modules/iCalendar/iCalendar.aspx?catID={category}&feed=calendar"
-    result = SourceCollection([], 0, 1, [])
+    result = SourceCollection([], 0, [])
     try:
         calendar = Calendar.from_ical(await fetch_bytes(client, feed_url))
         components = calendar.walk("VEVENT")
@@ -188,7 +187,7 @@ async def collect(
     for component in components:
         identity = str(component.get("UID", "")) or None
         try:
-            event = _parse(component, base, feed_url)
+            event = _parse(component, base)
             if event.external_id in seen:
                 raise ValueError("Repeated event identity in city export")
             seen.add(event.external_id)
@@ -208,7 +207,6 @@ async def collect(
         try:
             async with semaphore:
                 await asyncio.sleep(0.5)
-                result.requests += 1
                 html = await fetch_bytes(client, str(event.content.source_url))
             return _detail(html, event)
         except (httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:

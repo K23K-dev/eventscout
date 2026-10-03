@@ -210,7 +210,6 @@ def _parse(
             "status": status,
             "registration_url": registration,
             "icalendar": ical.decode("utf-8-sig") if ical else None,
-            "feed_urls": [calendar_url],
         },
     )
 
@@ -223,7 +222,7 @@ async def collect(
     window_start: datetime,
     window_end: datetime,
 ) -> SourceCollection:
-    result = SourceCollection(events=[], records_seen=0, requests=0, issues=[])
+    result = SourceCollection(events=[], records_seen=0, issues=[])
     listings: dict[str, _Listing] = {}
     month = window_start.astimezone(_TIMEZONE).date().replace(day=1)
     last = window_end.astimezone(_TIMEZONE).date().replace(day=1)
@@ -231,7 +230,6 @@ async def collect(
         raise ValueError("Calendar window is limited to twelve months")
     while month <= last:
         url = f"{calendar_url.rstrip('/')}/{month.isoformat()}"
-        result.requests += 1
         try:
             items, issues = _listing(await fetch_bytes(client, url), calendar_url)
             result.issues.extend(issues)
@@ -253,7 +251,6 @@ async def collect(
     async def fetch(url: str) -> bytes:
         async with semaphore:
             await asyncio.sleep(0.5)
-            result.requests += 1
             return await fetch_bytes(client, url)
 
     async def detail(item: _Listing) -> ParsedEvent | ParseIssue | None:

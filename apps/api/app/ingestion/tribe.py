@@ -166,7 +166,7 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         registration_url=HttpUrl(registration) if registration else None,
         status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
-    raw_payload = {**event, "feed_urls": [base_url]}
+    raw_payload = {**event}
     if ignored_end_reason is not None:
         raw_payload["ignored_end_reason"] = ignored_end_reason
     return ParsedEvent(str(identity), content, revision, raw_payload)
@@ -186,7 +186,7 @@ async def collect(
     The API's overlapping-date filters include ongoing exhibitions. Perpetual
     self-guided attractions and events in explicitly excluded cities are omitted.
     """
-    result = SourceCollection(events=[], records_seen=0, requests=0, issues=[])
+    result = SourceCollection(events=[], records_seen=0, issues=[])
     seen: set[str] = set()
     skipped = 0
     corrected_ends = 0
@@ -201,7 +201,6 @@ async def collect(
     for page in range(1, 101):
         if page > 1 and crawl_delay > 0:
             await asyncio.sleep(crawl_delay)
-        result.requests += 1
         try:
             response = json.loads(
                 await fetch_bytes(client, api_url, params={**params, "page": str(page)})

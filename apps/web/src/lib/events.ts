@@ -149,7 +149,7 @@ const stamp = (value: string) =>
     .replace(/[-:]/g, '')
     .replace(/\.\d{3}/, '')
 
-/** Start and end as calendar files want them: dates for all-day events, UTC times otherwise. */
+/** Start and end as Google Calendar wants them: dates for all-day events, UTC times otherwise. */
 function calendarDates(event: Event): [string, string] | null {
   if (event.all_day && event.start_date) {
     return [
@@ -172,32 +172,6 @@ export function googleCalendarUrl(event: Event) {
     .filter(Boolean)
     .join('\n\n')
   return `https://calendar.google.com/calendar/render?${new URLSearchParams({ action: 'TEMPLATE', text: event.title, dates: dates.join('/'), details, location: event.venue ?? '', ctz: timezone })}`
-}
-
-/** An .ics file for Apple Calendar, Outlook, and the rest. */
-export function calendarFile(event: Event) {
-  const dates = calendarDates(event)
-  if (!dates) return null
-  const text = (value: string) =>
-    value.replace(/[\\;,]/g, match => `\\${match}`).replace(/\r?\n/g, '\\n')
-  const date = event.all_day ? ';VALUE=DATE' : ''
-  const lines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//EventScout//EN',
-    'BEGIN:VEVENT',
-    `UID:${event.id}@eventscout`,
-    `DTSTAMP:${stamp(new Date().toISOString())}`,
-    `DTSTART${date}:${dates[0]}`,
-    `DTEND${date}:${dates[1]}`,
-    `SUMMARY:${text(event.title)}`,
-    ...(event.venue ? [`LOCATION:${text(event.venue)}`] : []),
-    `DESCRIPTION:${text([event.summary, event.source_url].filter(Boolean).join('\n\n'))}`,
-    `URL:${event.registration_url || event.source_url}`,
-    'END:VEVENT',
-    'END:VCALENDAR',
-  ]
-  return new Blob([lines.join('\r\n')], { type: 'text/calendar' })
 }
 
 export function checkedAt(value: string) {
