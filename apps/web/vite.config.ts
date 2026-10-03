@@ -12,8 +12,16 @@ export default defineConfig({
         // Libraries get their own long-cached chunks, so the app's chunk stays small.
         codeSplitting: {
           groups: [
-            { name: 'react', priority: 30, test: /node_modules[\\/](react|react-dom|scheduler|react-router|react-router-dom)[\\/]/ },
-            { name: 'ui', priority: 20, test: /node_modules[\\/](radix-ui|@radix-ui|@floating-ui|react-day-picker|date-fns|sonner|lucide-react)[\\/]/ },
+            {
+              name: 'react',
+              priority: 30,
+              test: /node_modules[\\/](react|react-dom|scheduler|react-router|react-router-dom)[\\/]/,
+            },
+            {
+              name: 'ui',
+              priority: 20,
+              test: /node_modules[\\/](radix-ui|@radix-ui|@floating-ui|react-day-picker|date-fns|sonner|lucide-react)[\\/]/,
+            },
             { name: 'vendor', priority: 10, test: /node_modules[\\/]/ },
           ],
         },

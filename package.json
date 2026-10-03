@@ -13,6 +13,7 @@
     "enrich": "uv run --directory apps/api --locked python -m app.enrichment",
     "index": "uv run --directory apps/api --locked python -m app.indexing",
     "lint": "pnpm --filter @eventscout/web lint",
+    "format": "pnpm --filter @eventscout/web format",
     "typecheck": "pnpm --filter @eventscout/web typecheck",
     "build": "pnpm --filter @eventscout/web build",
     "check:api": "uv run --directory apps/api --locked ruff check . && uv run --directory apps/api --locked ruff format --check . && uv run --directory apps/api --locked mypy",

@@ -1,6 +1,29 @@
 import {
-  BookOpen, Briefcase, CalendarDays, Church, Cpu, Drama, Dumbbell, Film, FlaskConical, Footprints, GraduationCap, HandHeart, HeartPulse,
-  Laugh, Mic, Music, Palette, PencilLine, Shapes, Trees, TrendingUp, Trophy, Users, UtensilsCrossed, type LucideIcon,
+  BookOpen,
+  Briefcase,
+  CalendarDays,
+  Church,
+  Cpu,
+  Drama,
+  Dumbbell,
+  Film,
+  FlaskConical,
+  Footprints,
+  GraduationCap,
+  HandHeart,
+  HeartPulse,
+  Laugh,
+  Mic,
+  Music,
+  Palette,
+  PencilLine,
+  Shapes,
+  Trees,
+  TrendingUp,
+  Trophy,
+  Users,
+  UtensilsCrossed,
+  type LucideIcon,
 } from 'lucide-react'
 
 export interface Topic {
@@ -10,7 +33,16 @@ export interface Topic {
 }
 
 // Soft tints keep the page neutral; related topics share one.
-const tint = { rose: '#f2a7b8', amber: '#f2c46d', lime: '#b8d883', teal: '#77d0bf', sky: '#88c3f1', indigo: '#aab3f6', orange: '#f3a87c', stone: '#cdc6ba' }
+const tint = {
+  rose: '#f2a7b8',
+  amber: '#f2c46d',
+  lime: '#b8d883',
+  teal: '#77d0bf',
+  sky: '#88c3f1',
+  indigo: '#aab3f6',
+  orange: '#f3a87c',
+  stone: '#cdc6ba',
+}
 
 // The categories enrichment assigns (the API's Topic values), in the order Discover lists them.
 export const topics: Record<string, Topic> = {

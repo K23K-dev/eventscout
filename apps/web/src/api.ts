@@ -65,16 +65,25 @@ const catalogErrors: Record<number, string> = {
   422: 'Check your search filters and choose a date range of 1–90 days.',
 }
 
-async function request<T>(path: string, signal: AbortSignal, errors = catalogErrors, headers: HeadersInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  signal: AbortSignal,
+  errors = catalogErrors,
+  headers: HeadersInit = {},
+): Promise<T> {
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, {
       headers,
       signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
     })
     if (!response.ok) {
-      throw new ApiError(response.status, errors[response.status] ?? 'The event catalog is temporarily unavailable. Please try again.')
+      throw new ApiError(
+        response.status,
+        errors[response.status] ??
+          'The event catalog is temporarily unavailable. Please try again.',
+      )
     }
-    return await response.json() as T
+    return (await response.json()) as T
   } catch (error) {
     if (signal.aborted || error instanceof ApiError) throw error
     throw new ApiError(0, 'Cannot reach the event catalog. Please try again.')
@@ -141,14 +150,25 @@ export async function fetchConversations(signal: AbortSignal): Promise<Conversat
 }
 
 export async function fetchConversation(id: string, signal: AbortSignal): Promise<Conversation> {
-  return request<Conversation>(`/api/conversations/${encodeURIComponent(id)}`, signal, chatErrors, await signedIn())
+  return request<Conversation>(
+    `/api/conversations/${encodeURIComponent(id)}`,
+    signal,
+    chatErrors,
+    await signedIn(),
+  )
 }
 
 export async function deleteConversation(id: string): Promise<void> {
   const headers = await signedIn()
-  const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE', headers }).catch(() => null)
+  const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers,
+  }).catch(() => null)
   if (!response?.ok && response?.status !== 404) {
-    throw new ApiError(response?.status ?? 0, 'That conversation could not be deleted. Please try again.')
+    throw new ApiError(
+      response?.status ?? 0,
+      'That conversation could not be deleted. Please try again.',
+    )
   }
 }
 
@@ -170,7 +190,10 @@ export async function askEvents(
     throw new ApiError(0, 'Cannot reach EventScout. Check your connection and try again.')
   }
   if (!response.ok || !response.body) {
-    throw new ApiError(response.status, chatErrors[response.status] ?? 'AI search is temporarily unavailable. Please try again.')
+    throw new ApiError(
+      response.status,
+      chatErrors[response.status] ?? 'AI search is temporarily unavailable. Please try again.',
+    )
   }
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
   let buffer = ''

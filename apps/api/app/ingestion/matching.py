@@ -47,6 +47,40 @@ def _label(value: str) -> str:
     return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", value).casefold()))
 
 
+# So "117 N Park Sq" and "117 North Park Square" name the same place.
+_STREET_WORDS = {
+    "n": "north",
+    "s": "south",
+    "e": "east",
+    "w": "west",
+    "ne": "northeast",
+    "nw": "northwest",
+    "se": "southeast",
+    "sw": "southwest",
+    "st": "street",
+    "ave": "avenue",
+    "rd": "road",
+    "dr": "drive",
+    "blvd": "boulevard",
+    "pkwy": "parkway",
+    "ct": "court",
+    "ln": "lane",
+    "sq": "square",
+    "pl": "place",
+    "hwy": "highway",
+    "cir": "circle",
+}
+
+
+def _address(venue: str) -> str | None:
+    """The venue's street address, if one of its comma-separated parts starts with a number."""
+    for part in venue.split(","):
+        words = _label(part).split()
+        if len(words) >= 2 and re.fullmatch(r"\d+[a-z]?", words[0]):
+            return " ".join(_STREET_WORDS.get(word, word) for word in words)
+    return None
+
+
 def _url(value: str) -> str:
     parts = urlsplit(value)
     query = sorted(
@@ -96,6 +130,12 @@ def _keys(
         for description in descriptions:
             if len(description) >= 200:
                 keys.add(("description-title-venue", title, when, venue, description))
+        # One title at one time and place is one event, whichever calendar lists it and however
+        # it spells the venue. One- and two-word names like "Atlanta" are too vague to count.
+        if len(venue.split()) >= 3:
+            keys.add(("title-venue", title, when, venue))
+        if address := _address(content.venue):
+            keys.add(("title-address", title, when, address))
     return keys
 
 

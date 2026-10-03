@@ -5,9 +5,19 @@ import { cn } from '@/lib/utils'
 import { signIn, signOut, useSession } from '../auth'
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar'
 import { Button, buttonVariants } from './ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu'
 
-const sections = [['/', 'Discover', Compass], ['/ask', 'Ask', MessageCircle]] as const
+const sections = [
+  ['/', 'Discover', Compass],
+  ['/ask', 'Ask', MessageCircle],
+] as const
 
 export function PageShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
@@ -21,21 +31,43 @@ export function PageShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-svh flex-col">
-      <a className="sr-only rounded-md border bg-card px-3 py-2 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50" href="#main">Skip to content</a>
+      <a
+        className="sr-only rounded-md border bg-card px-3 py-2 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50"
+        href="#main"
+      >
+        Skip to content
+      </a>
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-lg">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
-          <Link className="flex shrink-0 items-center gap-2 text-[15px] font-semibold tracking-tight" to="/" aria-label="EventScout home">
+          <Link
+            className="flex shrink-0 items-center gap-2 text-[15px] font-semibold tracking-tight"
+            to="/"
+            aria-label="EventScout home"
+          >
             <img className="size-6" src="/favicon.svg?v=3" alt="" width="24" height="24" />
             EventScout
           </Link>
           <nav aria-label="Main" className="flex items-center gap-1">
             {sections.map(([to, label, Icon]) => (
-              <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'px-2.5', isActive ? 'bg-accent text-foreground' : 'text-muted-foreground')}>
+              <NavLink
+                key={to}
+                to={to}
+                end={to === '/'}
+                className={({ isActive }) =>
+                  cn(
+                    buttonVariants({ variant: 'ghost', size: 'sm' }),
+                    'px-2.5',
+                    isActive ? 'bg-accent text-foreground' : 'text-muted-foreground',
+                  )
+                }
+              >
                 <Icon className="hidden sm:block" aria-hidden="true" /> {label}
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto"><Account /></div>
+          <div className="ml-auto">
+            <Account />
+          </div>
         </div>
       </header>
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-6">{children}</div>
@@ -54,7 +86,12 @@ export function PageShell({ children }: { children: ReactNode }) {
 function Account() {
   const session = useSession()
   if (session === undefined) return <div className="size-8" aria-hidden="true" />
-  if (!session) return <Button size="sm" onClick={() => void signIn()}>Sign in</Button>
+  if (!session)
+    return (
+      <Button size="sm" onClick={() => void signIn()}>
+        Sign in
+      </Button>
+    )
   const { email, user_metadata: profile } = session.user
   const name: string = profile.full_name || email || 'Your account'
   return (
