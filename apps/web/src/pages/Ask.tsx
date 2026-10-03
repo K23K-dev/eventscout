@@ -330,7 +330,7 @@ export function Ask() {
           {empty && !conversationId ? (
             <div className="flex flex-1 flex-col items-center justify-center py-12 text-center">
               <div className="flex size-10 items-center justify-center rounded-lg border bg-card">
-                <img src="/favicon.svg?v=3" alt="" className="size-5" width="20" height="20" />
+                <img src="/favicon.svg?v=4" alt="" className="size-5" width="20" height="20" />
               </div>
               <h1
                 id="ask-heading"
@@ -506,7 +506,7 @@ function Reply({ children }: { children: ReactNode }) {
         className="mt-px flex size-6 shrink-0 items-center justify-center rounded-md border bg-card"
         aria-hidden="true"
       >
-        <img src="/favicon.svg?v=3" alt="" className="size-3.5" width="14" height="14" />
+        <img src="/favicon.svg?v=4" alt="" className="size-3.5" width="14" height="14" />
       </div>
       <div className="min-w-0 flex-1">{children}</div>
     </div>

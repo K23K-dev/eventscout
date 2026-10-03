@@ -44,7 +44,7 @@ export function PageShell({ children }: { children: ReactNode }) {
             to="/"
             aria-label="EventScout home"
           >
-            <img className="size-6" src="/favicon.svg?v=3" alt="" width="24" height="24" />
+            <img className="size-6" src="/favicon.svg?v=4" alt="" width="24" height="24" />
             EventScout
           </Link>
           <nav aria-label="Main" className="flex items-center gap-1">
@@ -57,7 +57,7 @@ export function PageShell({ children }: { children: ReactNode }) {
                   cn(
                     buttonVariants({ variant: 'ghost', size: 'sm' }),
                     'px-2.5',
-                    isActive ? 'bg-accent text-foreground' : 'text-muted-foreground',
+                    isActive ? 'bg-accent text-primary' : 'text-muted-foreground',
                   )
                 }
               >

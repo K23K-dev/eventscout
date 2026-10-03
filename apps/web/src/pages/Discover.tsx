@@ -224,7 +224,11 @@ export function Discover() {
             aria-label="When"
           >
             {presets.map(([kind, label]) => (
-              <ToggleGroupItem key={kind} value={kind} className="px-3">
+              <ToggleGroupItem
+                key={kind}
+                value={kind}
+                className="px-3 data-[state=on]:text-primary"
+              >
                 {label}
               </ToggleGroupItem>
             ))}
@@ -239,7 +243,7 @@ export function Discover() {
         <Toggle
           variant="outline"
           size="sm"
-          className="px-3"
+          className="px-3 data-[state=on]:text-primary"
           pressed={free}
           onPressedChange={on => apply({ price_status: on ? 'free' : '' })}
         >
@@ -248,7 +252,7 @@ export function Discover() {
         <Toggle
           variant="outline"
           size="sm"
-          className="px-3"
+          className="px-3 data-[state=on]:text-primary"
           pressed={campus}
           onPressedChange={on => apply({ region: on ? 'gt' : '' })}
         >

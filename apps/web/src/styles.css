@@ -5,32 +5,31 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Neutral zinc grays in the style of modern product UIs: a near-black page (not pure black),
- * slightly lighter cards, hairline borders, white for primary actions, and the brand amber
- * only in small touches.
+ * Georgia Tech colors: deep navy surfaces built on GT Navy (#003057), with Tech Gold (#b3a369)
+ * for primary actions, active states, and focus rings. Every text pairing meets WCAG AA.
  */
 :root {
   color-scheme: dark;
   --radius: 0.5rem;
-  --background: #111113;
-  --foreground: #fafafa;
-  --card: #18181b;
-  --card-foreground: #fafafa;
-  --popover: #18181b;
-  --popover-foreground: #fafafa;
-  --primary: #fafafa;
-  --primary-foreground: #18181b;
-  --secondary: #27272a;
-  --secondary-foreground: #fafafa;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
-  --accent: #27272a;
-  --accent-foreground: #fafafa;
+  --background: #071526;
+  --foreground: #f2f4f8;
+  --card: #0c1f36;
+  --card-foreground: #f2f4f8;
+  --popover: #0c1f36;
+  --popover-foreground: #f2f4f8;
+  --primary: #b3a369;
+  --primary-foreground: #003057;
+  --secondary: #152b47;
+  --secondary-foreground: #f2f4f8;
+  --muted: #152b47;
+  --muted-foreground: #9aabc2;
+  --accent: #152b47;
+  --accent-foreground: #f2f4f8;
   --destructive: #f87171;
-  --border: rgb(255 255 255 / 0.08);
-  --input: rgb(255 255 255 / 0.12);
-  --ring: #71717a;
-  --brand: #f2b24f;
+  --border: rgb(255 255 255 / 0.09);
+  --input: rgb(255 255 255 / 0.14);
+  --ring: #b3a369;
+  --brand: #b3a369;
 }
 
 @theme inline {
@@ -81,7 +80,7 @@
   }
 
   ::selection {
-    background-color: rgb(242 178 79 / 0.3);
+    background-color: rgb(179 163 105 / 0.35);
   }
 
   a,

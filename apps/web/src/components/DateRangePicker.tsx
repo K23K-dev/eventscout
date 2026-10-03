@@ -38,11 +38,7 @@ export function DateRangePicker({
       }}
     >
       <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className={cn(custom && 'bg-accent text-accent-foreground')}
-        >
+        <Button variant="outline" size="sm" className={cn(custom && 'bg-accent text-primary')}>
           <CalendarDays aria-hidden="true" />{' '}
           {custom ? `${formatDate(start)} – ${formatDate(end)}` : 'Dates'}
         </Button>
