@@ -94,8 +94,6 @@ async def collect(
             continue
         try:
             parsed = parse_feed(response)
-            if parsed.records_seen == 0 and name != "special":
-                raise ValueError("unexpectedly empty feed")
         except ValueError as exc:
             if name == "student":
                 result.warnings.append(
@@ -149,10 +147,7 @@ def _sections(html: str) -> tuple[str, dict[str, str]]:
 
 
 def _aware_time(value: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError("Invalid ISO timestamp in event metadata") from exc
+    parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("Event timestamps must include a timezone offset")
     return parsed.astimezone(UTC)
@@ -183,8 +178,6 @@ def _event_time(html: str) -> tuple[datetime | None, datetime | None, date | Non
     times = [_aware_time(value) for value in values]
     if re.search(r"\ball[ -]day\b", _text(html), re.IGNORECASE):
         raise ValueError("All-day event has timestamps; date boundaries need review")
-    if len(times) == 2 and times[1] <= times[0]:
-        raise ValueError("Event end must be after its start")
     return times[0], times[1] if len(times) == 2 else None, None, None
 
 

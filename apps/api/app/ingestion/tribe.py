@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from bs4 import BeautifulSoup
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
@@ -56,9 +56,7 @@ def _url(value: object, base: str) -> HttpUrl | None:
 
 
 def _utc(value: object) -> datetime:
-    if not isinstance(value, str):
-        raise ValueError("Missing published UTC event timestamp")
-    parsed = datetime.fromisoformat(value)
+    parsed = datetime.fromisoformat(str(value))
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
@@ -72,10 +70,8 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
     title = _text(event.get("title"))
     description = _text(event.get("description"))
     all_day = event.get("all_day") is True
-    zone = event.get("timezone", "America/New_York")
+    zone = str(event.get("timezone", "America/New_York"))
     try:
-        if not isinstance(zone, str):
-            raise ValueError("Missing timezone")
         ZoneInfo(zone)
     except (ZoneInfoNotFoundError, ValueError):
         # UTC timestamps remain authoritative if a publisher uses an offset label.
@@ -209,15 +205,9 @@ async def collect(
             response = json.loads(
                 await fetch_bytes(client, api_url, params={**params, "page": str(page)})
             )
-            if not isinstance(response, dict) or not isinstance(response.get("events"), list):
-                raise ValueError("Expected a public Tribe events collection")
             events = response["events"]
-            pages = response.get("total_pages")
-            if not isinstance(pages, int) or isinstance(pages, bool) or pages < 0:
-                raise ValueError("Missing valid pagination total")
-            if not events and pages > 0:
-                raise ValueError("Calendar returned an unexpectedly empty page")
-        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+            pages = int(response["total_pages"])
+        except (httpx.HTTPError, TimeoutError, ValueError, TypeError, KeyError) as exc:
             result.issues.append(
                 ParseIssue(None, f"Calendar page {page} failed: {issue_message(exc)}")
             )
@@ -255,8 +245,7 @@ async def collect(
                 corrected_ends += "ignored_end_reason" in event.raw_payload
                 result.events.append(event)
             except (ValueError, TypeError) as exc:
-                message = "Invalid event fields" if isinstance(exc, ValidationError) else str(exc)
-                result.issues.append(ParseIssue(identity, message))
+                result.issues.append(ParseIssue(identity, issue_message(exc)))
         if page >= pages:
             break
     else:

@@ -219,8 +219,6 @@ async def run_import(
     source_names: list[str] | None = None,
 ) -> ImportReport:
     """Import selected calendars; repeat observations do not create canonical changes."""
-    if not 1 <= days <= 90:
-        raise ValueError("days must be between 1 and 90")
     sources = [SOURCES[name] for name in dict.fromkeys(source_names or SOURCES)]
     start = datetime.now(UTC)
     end = start + timedelta(days=days)

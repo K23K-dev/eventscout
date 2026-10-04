@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from dateutil import parser
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
@@ -28,14 +29,11 @@ _TIMEZONE = ZoneInfo("America/New_York")
 _MAX_PAGES = 50
 
 
-def _text(parent: Tag | BeautifulSoup, selector: str, *, required: bool = False) -> str:
+def _text(parent: Tag | BeautifulSoup, selector: str) -> str:
     matches = parent.select(selector)
-    if len(matches) > 1 or (required and not matches):
+    if len(matches) > 1:
         raise ValueError(f"Expected one {selector} field")
-    value = " ".join(matches[0].get_text(" ", strip=True).split()) if matches else ""
-    if required and not value:
-        raise ValueError(f"Empty {selector} field")
-    return value
+    return " ".join(matches[0].get_text(" ", strip=True).split()) if matches else ""
 
 
 def _url(value: str, *, library_only: bool = False) -> str:
@@ -53,8 +51,7 @@ def _href(tag: Tag | None) -> str:
 
 
 def _local_time(day: str, clock: str) -> datetime:
-    naive = datetime.strptime(f"{day} {clock}", "%d %B %Y %I:%M %p")
-    return localize(naive, _TIMEZONE).astimezone(UTC)
+    return localize(parser.parse(f"{day} {clock}"), _TIMEZONE).astimezone(UTC)
 
 
 def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
@@ -67,14 +64,12 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
     detail = soup.select_one("main .node-detail")
     if detail is None:
         raise ValueError("Missing Library event details")
-    title = _text(detail, "h1", required=True)
-    day = " ".join(
-        _text(detail, f".node-detail__{part}", required=True) for part in ("day", "month", "year")
-    )
-    clock = _text(detail, ".hours-of-operation", required=True)
+    title = _text(detail, "h1")
+    day = " ".join(_text(detail, f".node-detail__{part}") for part in ("day", "month", "year"))
+    clock = _text(detail, ".hours-of-operation")
     # Library pages publish campus-local wall times, without a UTC offset.
     all_day = bool(re.fullmatch(r"all[ -]day", clock, re.I))
-    start_date = datetime.strptime(day, "%d %B %Y").date() if all_day else None
+    start_date = parser.parse(day).date() if all_day else None
     starts_at = ends_at = None
     if not all_day:
         clocks = re.split(r"\s*[-–—]\s*", clock)
@@ -82,13 +77,9 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
             raise ValueError("Expected one start time and an optional end time")
         starts_at = _local_time(day, clocks[0])
         ends_at = _local_time(day, clocks[1]) if len(clocks) == 2 else None
-        if ends_at is not None and ends_at <= starts_at:
-            raise ValueError("Event end must follow its start on the published date")
     body = detail.select_one(".node-detail__content-body")
-    if body is None:
-        raise ValueError("Missing Library event description")
-    body_html = str(body)
-    description = text(body_html)
+    body_html = str(body) if body else ""
+    description = text(body)
     detail_venue = _text(detail, ".taxonomy-box.location")
     venue = listing_venue or detail_venue
     if venue.casefold() == "in person":
@@ -158,20 +149,16 @@ async def collect(
         try:
             html = await fetch_bytes(client, next_url)
             soup = BeautifulSoup(html, "html.parser")
-            view = soup.select_one(".public-programming-listing--view")
-            if view is None:
-                raise ValueError("Missing Library calendar listing")
-            cards = view.select("a.event-card")
+            cards = soup.select(".public-programming-listing--view a.event-card")
             result.records_seen += len(cards)
-            if not cards and "no results" not in view.get_text(" ", strip=True).casefold():
-                raise ValueError("Library returned an unexpectedly empty listing")
             for card in cards:
                 url = _url(_href(card), library_only=True)
                 if not urlsplit(url).path.startswith("/events/"):
                     raise ValueError("Unexpected Library event detail path")
                 listings.setdefault(url, _text(card, ".event-card__class_type"))
             next_links = {
-                _url(_href(tag), library_only=True) for tag in view.select('a[rel="next"]')
+                _url(_href(tag), library_only=True)
+                for tag in soup.select('.public-programming-listing--view a[rel="next"]')
             }
             if len(next_links) > 1:
                 raise ValueError("Library pagination has conflicting next links")

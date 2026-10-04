@@ -60,21 +60,16 @@ class _Event(BaseModel):
 
 
 def _url(value: str) -> HttpUrl:
-    href: object = value.strip()
     if "<" in value:
         anchor = BeautifulSoup(value, "html.parser").find("a")
-        href = anchor.get("href") if isinstance(anchor, Tag) else None
-    if not isinstance(href, str):
-        raise ValueError("Registration link has no URL")
-    return http_url(unescape(href))
+        value = str(anchor.get("href")) if isinstance(anchor, Tag) else ""
+    return http_url(unescape(value.strip()))
 
 
 def _timestamp(value: str, offset: str) -> datetime:
     if not re.fullmatch(r"[+-]\d{4}", offset):
         raise ValueError("Event time needs an explicit UTC offset")
     parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is not None:
-        raise ValueError("Expected a local Trumba timestamp with a separate UTC offset")
     aware = datetime.fromisoformat(value + offset)
     # The JSON uses local wall time, verified against Emory's ICS feed. Validate
     # the supplied offset independently, including both sides of DST changes.
@@ -104,8 +99,6 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
     description = _text(event.description)
     begins = _timestamp(event.startDateTime, event.startTimeZoneOffset)
     finishes = _timestamp(event.endDateTime, event.endTimeZoneOffset)
-    if finishes < begins:
-        raise ValueError("Event end precedes its start")
     start_date = end_date = None
     if event.allDay:
         local_start, local_end = begins.astimezone(_TIMEZONE), finishes.astimezone(_TIMEZONE)
@@ -163,10 +156,7 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
 
 def parse_feed(payload: bytes) -> ParsedFeed:
     """Normalize source fields without turning registration defaults into prices."""
-    try:
-        records = _JSON_EVENTS.validate_json(payload)
-    except ValidationError as exc:
-        raise ValueError("Expected a Trumba JSON array of event objects") from exc
+    records = _JSON_EVENTS.validate_json(payload)
     result = ParsedFeed(events=[], records_seen=len(records), issues=[])
     for raw in records:
         external_id = str(raw["eventID"]) if "eventID" in raw else None
@@ -187,12 +177,6 @@ async def collect(
     A saturated day or failed request is explicitly incomplete. The caller merges
     overlapping ongoing events by eventID and applies the precise time window.
     """
-    if any(
-        value.tzinfo is None or value.utcoffset() is None for value in (window_start, window_end)
-    ):
-        raise ValueError("The ingestion window must have timezone-aware boundaries")
-    if window_end <= window_start:
-        raise ValueError("The ingestion window must end after it starts")
     local_end = window_end.astimezone(_TIMEZONE)
     finish = local_end.date() + timedelta(days=int(local_end.time() != time.min))
     cursor = window_start.astimezone(_TIMEZONE).date()

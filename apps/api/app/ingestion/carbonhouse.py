@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from dateutil import parser
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
@@ -31,9 +32,7 @@ _ZONE = ZoneInfo("America/New_York")
 
 
 def _url(value: object, base: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError("Missing public event link")
-    return str(http_url(urljoin(base, unescape(value))))
+    return str(http_url(urljoin(base, unescape(str(value)))))
 
 
 def _event_schema(soup: BeautifulSoup) -> dict[str, Any]:
@@ -58,29 +57,20 @@ def _showing_start(showing: Tag) -> datetime | None:
         title = str(anchor.get("title", ""))
         if re.search(r"\bat\s+(?:TBA|TBD)\b", title, re.I):
             return None
-        match = re.search(
-            r"(?:for )?([A-Za-z]+\s+\d{1,2}\s+\d{4})\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)", title, re.I
-        )
-        if match:
-            day, clock = match.groups()
-            value = " ".join(day.split()) + " " + clock.replace(" ", "")
+        if match := re.search(
+            r"[A-Za-z]+\s+\d{1,2}\s+\d{4}\s+at\s+\d{1,2}:\d{2}\s*[AP]M", title, re.I
+        ):
+            value = match[0]
             break
     else:
-        month = text(showing.select_one(".m-date__month"))
-        day = text(showing.select_one(".m-date__day"))
-        year = text(showing.select_one(".m-date__year")).strip(", ")
-        clock = re.sub(r"^at\s*", "", text(showing.select_one(".m-date__hour")), flags=re.I)
-        value = f"{month} {day} {year} {clock.replace(' ', '')}"
-    return localize(datetime.strptime(value, "%B %d %Y %I:%M%p"), _ZONE).astimezone(UTC)
+        parts = (".m-date__month", ".m-date__day", ".m-date__year", ".m-date__hour")
+        value = " ".join(text(showing.select_one(part)) for part in parts)
+    return localize(parser.parse(value), _ZONE).astimezone(UTC)
 
 
-def _parse_detail(
-    html: bytes, url: str, calendar_url: str, default_venue: str, window_start: datetime
-) -> tuple[list[ParsedEvent], list[str]]:
+def _parse_detail(html: bytes, url: str, default_venue: str) -> tuple[list[ParsedEvent], list[str]]:
     soup = BeautifulSoup(html, "html.parser")
     title = text(soup.select_one("h1"))
-    if not title:
-        raise ValueError("Missing event title")
     description = text(soup.select_one(".event_description"))
     schema = _event_schema(soup)
     if not description and isinstance(schema.get("description"), str):
@@ -95,13 +85,6 @@ def _parse_detail(
             cost = text(item).removeprefix(label).strip()
     price_status, price_details = cost_price(cost) if cost else described_price(description)
     showings = soup.select("[data-showing-id], [id^='showing_']")
-    if not showings:
-        last_time = schema.get("endDate") or schema.get("startDate")
-        if isinstance(last_time, str):
-            ending = datetime.fromisoformat(last_time)
-            if ending.tzinfo is not None and ending <= window_start:
-                return [], []
-        raise ValueError("No individual showing identities published on this page")
     events: list[ParsedEvent] = []
     warnings: list[str] = []
     for showing in showings:
@@ -204,8 +187,6 @@ async def collect(
                     params={"v": "2", "detail_partial": "events/partials/calendar_detail"},
                 )
             )
-            if data != [] and not isinstance(data, dict):
-                raise ValueError("Expected a month calendar object")
             for day, markup in data.items() if isinstance(data, dict) else []:
                 published_day = datetime.strptime(day, "%m-%d-%Y").date()
                 if (
@@ -214,8 +195,6 @@ async def collect(
                     <= window_end.astimezone(_ZONE).date()
                 ):
                     continue
-                if not isinstance(markup, str):
-                    raise ValueError("Invalid month calendar markup")
                 for anchor in BeautifulSoup(markup, "html.parser").select("h3 a[href]"):
                     url = _url(anchor.get("href"), origin)
                     if urlsplit(url).hostname != parts.hostname:
@@ -226,7 +205,7 @@ async def collect(
                         )
                         continue
                     urls.add(url)
-        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+        except (httpx.HTTPError, TimeoutError, ValueError, TypeError) as exc:
             result.issues.append(ParseIssue(None, f"Month calendar failed ({type(exc).__name__})"))
         current = current.replace(
             year=current.year + (current.month == 12), month=current.month % 12 + 1
@@ -239,9 +218,7 @@ async def collect(
     async def detail(url: str) -> tuple[list[ParsedEvent], list[str]] | ParseIssue:
         async with semaphore:
             try:
-                return _parse_detail(
-                    await fetch_bytes(client, url), url, calendar_url, default_venue, window_start
-                )
+                return _parse_detail(await fetch_bytes(client, url), url, default_venue)
             except (httpx.HTTPError, TimeoutError, ValueError, TypeError) as exc:
                 return ParseIssue(url, issue_message(exc))
 

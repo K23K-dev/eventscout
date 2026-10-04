@@ -45,10 +45,6 @@ class SourceCollection:
 
 def in_window(content: EventContent, start: datetime, end: datetime) -> bool:
     """Include ongoing events in a half-open window, after merging source revisions."""
-    if any(value.tzinfo is None or value.utcoffset() is None for value in (start, end)):
-        raise ValueError("The ingestion window must have timezone-aware boundaries")
-    if end <= start:
-        raise ValueError("The ingestion window must end after it starts")
     if content.start_date is not None:
         timezone = ZoneInfo(content.timezone)
         begins = datetime.combine(content.start_date, time.min, timezone)

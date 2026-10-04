@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup
+from dateutil import parser
 from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
@@ -18,6 +19,7 @@ from app.ingestion.parsing import (
     CANCELLED_TITLE,
     MEMBERS_ONLY,
     described_price,
+    http_url,
     localize,
     location_kind,
 )
@@ -39,20 +41,16 @@ class _Listing:
 def _url(value: str, *, internal: bool = False) -> str:
     result = urljoin(LISTING_URL, unescape(value))
     parts = urlsplit(result)
-    if parts.scheme not in {"http", "https"} or parts.username or parts.password:
-        raise ValueError("Event link must be HTTP(S) without embedded credentials")
     if internal and (
         parts.hostname != "atlantatechvillage.com" or not parts.path.startswith("/events")
     ):
         raise ValueError("Expected an Atlanta Tech Village event link")
-    return result
+    return str(http_url(result))
 
 
 def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]:
     soup = BeautifulSoup(html, "html.parser")
     cards = soup.select(".single-item")
-    if not cards:
-        raise ValueError("Atlanta Tech Village event listing was not present")
     events: list[_Listing] = []
     issues: list[ParseIssue] = []
     for card in cards:
@@ -61,13 +59,9 @@ def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]
             link = card.select_one("a[href][data-wf-cms-context]")
             if link is None:
                 raise ValueError("Missing stable Webflow item identity")
-            context = link.get("data-wf-cms-context")
-            href = link.get("href")
-            if not isinstance(context, str) or not isinstance(href, str):
-                raise ValueError("Missing event metadata")
             identities = {
                 str(item["itemId"])
-                for item in json.loads(unquote(context))
+                for item in json.loads(unquote(str(link["data-wf-cms-context"])))
                 if isinstance(item, dict) and "itemId" in item
             }
             if len(identities) != 1:
@@ -76,21 +70,15 @@ def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]
             if not re.fullmatch(r"[a-f0-9]{24}", external_id):
                 raise ValueError("Invalid Webflow item identity")
             day = datetime.strptime(_text(card.select_one(".event-date-2")), "%B %d, %Y").date()
-            events.append(_Listing(external_id, _url(href, internal=True), day))
+            events.append(_Listing(external_id, _url(str(link["href"]), internal=True), day))
         except (ValueError, TypeError, KeyError) as exc:
             issues.append(ParseIssue(external_id, str(exc)))
     next_link = soup.select_one("a.w-pagination-next[href]")
-    next_href = next_link.get("href") if next_link else None
-    return (
-        events,
-        issues,
-        _url(next_href, internal=True) if isinstance(next_href, str) else None,
-    )
+    return events, issues, _url(str(next_link["href"]), internal=True) if next_link else None
 
 
 def _local_time(day: str, clock: str) -> datetime:
-    naive = datetime.strptime(f"{day} {clock}", "%A, %B %d, %Y %I:%M %p")
-    return localize(naive, _TIMEZONE).astimezone(UTC)
+    return localize(parser.parse(f"{day} {clock}"), _TIMEZONE).astimezone(UTC)
 
 
 def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
@@ -111,8 +99,6 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
     ends_at = _local_time(day, clocks[1]) if len(clocks) == 2 else None
     if ends_at == starts_at:
         ends_at = None
-    if ends_at is not None and ends_at < starts_at:
-        raise ValueError("An overnight event needs an explicit end date")
     where = fields.get("where")
     venue_node = where.select_one(".w-richtext") if where else None
     venue = _text(venue_node)

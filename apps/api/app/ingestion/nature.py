@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from dateutil import parser
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
@@ -21,16 +22,12 @@ SOUTH_FORK_URL = "https://southforkconservancy.org/events"
 
 def _text(parent: Tag, selector: str) -> str:
     element = parent.select_one(selector)
-    if element is None:
-        raise ValueError(f"Missing {selector}")
-    return element.get_text(" ", strip=True)
+    return element.get_text(" ", strip=True) if element else ""
 
 
 def _local_time(year: int, date_text: str, clock: str) -> datetime:
     # The requested month supplies the year that the publisher omits in its cards.
-    normalized = clock.strip().upper()
-    pattern = "%Y %a %b %d %I:%M%p" if ":" in normalized else "%Y %a %b %d %I%p"
-    return localize(datetime.strptime(f"{year} {date_text} {normalized}", pattern), EASTERN)
+    return localize(parser.parse(f"{date_text} {year} {clock}"), EASTERN)
 
 
 def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
@@ -95,8 +92,6 @@ async def collect_trees(
     while (current.year, current.month) <= (last.year, last.month):
         feed_url = f"{TREES_URL}?month={current:%Y%m}"
         document = BeautifulSoup(await fetch_bytes(client, feed_url), "html.parser")
-        if document.select_one("#events-filters") is None:
-            raise ValueError("Unrecognized Trees Atlanta calendar")
         cards = document.select(".event")
         result.records_seen += len(cards)
         if document.select_one("#paginate") is not None:
@@ -142,9 +137,7 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
     title = anchor.get_text(" ", strip=True)
     content = EventContent(
         title=title,
-        description=(
-            _text(card, ".eventlist-excerpt") if card.select_one(".eventlist-excerpt") else ""
-        ),
+        description=_text(card, ".eventlist-excerpt"),
         starts_at=begins,
         ends_at=finishes if finishes > begins else None,
         venue=venue,
@@ -167,8 +160,6 @@ async def collect_south_fork(
 ) -> SourceCollection:
     document = BeautifulSoup(await fetch_bytes(client, SOUTH_FORK_URL), "html.parser")
     cards = document.select("article.eventlist-event")
-    if not cards and document.select_one(".eventlist") is None:
-        raise ValueError("Unrecognized South Fork Conservancy calendar")
     result = SourceCollection([], len(cards), [])
     for card in cards:
         try:

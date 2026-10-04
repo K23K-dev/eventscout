@@ -3,7 +3,7 @@
 import asyncio
 import re
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -39,15 +39,11 @@ def _parse(event: Component, base: str) -> ParsedEvent:
         raise ValueError("Expected expanded CivicEngage occurrences")
     start = event.decoded("DTSTART")
     end = event.decoded("DTEND") if event.get("DTEND") is not None else None
-    if not isinstance(start, date) or (end is not None and not isinstance(end, date)):
-        raise ValueError("Invalid CivicEngage event dates")
     all_day = not isinstance(start, datetime)
     starts_at = ends_at = None
     start_date = end_date = None
     if all_day:
         start_date = start
-        if isinstance(end, datetime):
-            raise ValueError("All-day event has a timed end")
         # The verified single-day exports use DTSTART == DTEND, unlike RFC 5545.
         # Do not assume the same end convention for an unverified multi-day export.
         if end is not None and end != start:
@@ -110,8 +106,6 @@ def _detail(html: bytes, event: ParsedEvent) -> ParsedEvent:
         raise ValueError("Missing CivicEngage event details")
     when = scope.select_one('.specificDetail[id$="_time"] .specificDetailItem')
     time_label = _text(when)
-    if not time_label:
-        raise ValueError("Missing displayed event time")
     if (time_label.casefold() == "all day") != event.content.all_day:
         raise ValueError("Calendar export and public detail disagree on all-day status")
     # The visible time range is authoritative about whether DTEND is a placeholder.

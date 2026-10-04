@@ -42,8 +42,6 @@ async def collect(
     window_end: datetime,
     library: str,
 ) -> SourceCollection:
-    if library not in CALENDARS:
-        raise ValueError("Unsupported public library calendar")
     base = CALENDARS[library]
     # The event listing itself loads this public location metadata to construct
     # branch filters. No credentials or event-registration endpoints are used.
@@ -53,8 +51,6 @@ async def collect(
         raise ValueError("Unexpected public library location list")
     branches: dict[str, str] = {}
     for location in locations:
-        if not isinstance(location, dict):
-            raise ValueError("Invalid public library location")
         identity, name = str(location.get("id", "")), str(location.get("name", ""))
         if not identity.isdecimal() or not name or identity in branches:
             raise ValueError("Missing or repeated library location identity")

@@ -45,8 +45,7 @@ def _performance(card: Tag) -> ParsedEvent:
     program = _link(card, "a.calendar-event-popover__secondary[href]")
     title = _text(card, "h3")
     published_time = _text(card, ".calendar-event-popover__date")
-    naive = datetime.strptime(published_time, "%A, %B %d, %Y at %I:%M %p")
-    local = localize(naive, _ZONE)
+    local = localize(datetime.strptime(published_time, "%A, %B %d, %Y at %I:%M %p"), _ZONE)
     summary = _text(card, ".calendar-event-popover__summary")
     category = _text(card, ".calendar-event-popover__type")
     return ParsedEvent(
@@ -82,10 +81,7 @@ def _performance(card: Tag) -> ParsedEvent:
 
 def _month(html: bytes, month: datetime) -> ParsedFeed:
     soup = BeautifulSoup(html, "html.parser")
-    if soup.select_one(".calendar-shell") is None or not any(
-        heading.get_text(" ", strip=True) == month.strftime("%B %Y")
-        for heading in soup.select("h2")
-    ):
+    if month.strftime("%B %Y") not in {text(heading) for heading in soup.select("h2")}:
         raise ValueError("Calendar did not return the requested month")
     cards = soup.select("article.calendar-event-popover")
     if len(cards) > 2500:

@@ -45,17 +45,11 @@ def _event_url(base: str, value: str, *, path: str = "/events/details/") -> str:
 
 def _listing(html: bytes, base: str) -> tuple[list[_Listing], list[ParseIssue]]:
     soup = BeautifulSoup(html, "html.parser")
-    grid = soup.select_one("table.gz-cal-grid")
-    if grid is None:
-        raise ValueError("Public month calendar grid is missing")
     items: dict[str, _Listing] = {}
     issues: list[ParseIssue] = []
-    for link in grid.select('a[href*="/events/details/"]'):
+    for link in soup.select('table.gz-cal-grid a[href*="/events/details/"]'):
         try:
-            href = link.get("href")
-            if not isinstance(href, str):
-                raise ValueError("Event link is missing")
-            url = _event_url(base, href)
+            url = _event_url(base, str(link.get("href")))
             identity = re.search(r"-(\d+)$", urlsplit(url).path)
             if identity is None:
                 raise ValueError("Event is missing its stable ChamberMaster identity")
@@ -66,9 +60,7 @@ def _listing(html: bytes, base: str) -> tuple[list[_Listing], list[ParseIssue]]:
 
 
 def _datetime(value: str | None) -> datetime:
-    if not value:
-        raise ValueError("Event is missing a structured timestamp")
-    result = datetime.fromisoformat(value)
+    result = datetime.fromisoformat(str(value))
     if result.tzinfo is None:
         raise ValueError("Structured event timestamp must specify a timezone")
     return result.astimezone(UTC)
@@ -130,8 +122,6 @@ def _parse(
             all_day = True
             starts_at = ends_at = None
             start_date = start
-            if end is not None and (not isinstance(end, date) or isinstance(end, datetime)):
-                raise ValueError("Date-only event end has an incompatible type")
             end_date = end
         elif isinstance(start, datetime) and start.tzinfo is not None:
             starts_at = start.astimezone(UTC)
@@ -226,8 +216,6 @@ async def collect(
     listings: dict[str, _Listing] = {}
     month = window_start.astimezone(_TIMEZONE).date().replace(day=1)
     last = window_end.astimezone(_TIMEZONE).date().replace(day=1)
-    if (last.year - month.year) * 12 + last.month - month.month > 12:
-        raise ValueError("Calendar window is limited to twelve months")
     while month <= last:
         url = f"{calendar_url.rstrip('/')}/{month.isoformat()}"
         try:

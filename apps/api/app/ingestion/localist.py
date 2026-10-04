@@ -76,8 +76,6 @@ def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
     venue = calendar_text(event, "LOCATION")
     tags = calendar_categories(event)
     status = calendar_text(event, "STATUS").upper()
-    if status not in {"", "CONFIRMED", "TENTATIVE", "CANCELLED"}:
-        raise ValueError("Unsupported calendar event status")
     content = EventContent(
         title=title,
         description=description,
@@ -202,12 +200,8 @@ async def collect(
     window_end: datetime,
     url: str = FEED_URL,
 ) -> SourceCollection:
-    host = urlsplit(url).hostname
-    if host not in {"calendar.gsu.edu", "calendar.kennesaw.edu", "calendar.agnesscott.edu"}:
-        raise ValueError("Unsupported public Localist calendar publisher")
+    host = str(urlsplit(url).hostname)
     parsed, parent_count = parse_feed(await fetch_bytes(client, url), publisher_host=host)
-    if parsed.records_seen == 0:
-        raise ValueError("Publisher returned an unexpectedly empty subscription feed")
     return SourceCollection(
         events=[event for event in parsed.events if _discovery_event(event)],
         records_seen=parsed.records_seen,

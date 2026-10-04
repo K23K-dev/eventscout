@@ -39,9 +39,7 @@ def calendar_date(event: Event, key: str) -> date | datetime | None:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{key} must have an explicit timezone")
         return value.astimezone(UTC)
-    if isinstance(value, date):
-        return value
-    raise ValueError(f"Invalid {key} property")
+    return value if isinstance(value, date) else None
 
 
 def calendar_categories(event: Event) -> list[str]:
@@ -55,8 +53,6 @@ def calendar_events(data: bytes) -> list[Event]:
         calendar = Calendar.from_ical(data)
     except (ValueError, TypeError) as exc:
         raise ValueError("Publisher returned invalid iCalendar data") from exc
-    if calendar.name != "VCALENDAR":
-        raise ValueError("Expected a VCALENDAR subscription feed")
     return [part for part in calendar.walk("VEVENT") if isinstance(part, Event)]
 
 
@@ -137,8 +133,6 @@ def _parse_event(
     tags = calendar_categories(event)
     raw_tags: list[JsonValue] = list(tags)
     status = calendar_text(event, "STATUS").upper()
-    if status not in {"", "CONFIRMED", "TENTATIVE", "CANCELLED"}:
-        raise ValueError("Unsupported calendar status")
     all_day = not isinstance(starts, datetime)
     content = EventContent(
         title=title,

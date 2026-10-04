@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from dateutil import parser
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
@@ -35,8 +36,8 @@ def _url(value: object, base: str) -> HttpUrl:
     return http_url(urljoin(base, value))
 
 
-def _local(value: str, pattern: str) -> datetime:
-    return localize(datetime.strptime(value, pattern), _ZONE).astimezone(UTC)
+def _local(value: datetime) -> datetime:
+    return localize(value, _ZONE).astimezone(UTC)
 
 
 def _issue(identity: str | None, exc: Exception) -> ParseIssue:
@@ -53,13 +54,13 @@ def _earl_event(card: Tag) -> ParsedEvent:
         raise ValueError("Missing stable EARL event post ID")
     detail = card.select_one(".more-info-btn a")
     source_url = _url(detail.get("href") if detail else None, _EARL)
-    date = _text(card.select_one(".show-listing-date")).replace(".", "")
+    date = _text(card.select_one(".show-listing-date"))
     times = [_text(tag) for tag in card.select(".show-listing-time")]
+    # Labels read "8:30pm show" or "7:30 pm doors"; doors open before the event starts.
     show_times = [value for value in times if re.search(r"\bshow\b", value, re.I)]
     if len(show_times) != 1:
         raise ValueError("Missing unambiguous show time (door times are not event starts)")
-    clock = re.sub(r"\s*show\s*$", "", show_times[0], flags=re.I).replace(" ", "")
-    starts_at = _local(f"{date} {clock}", "%A, %b %d, %Y %I:%M%p")
+    starts_at = _local(parser.parse(f"{date} {show_times[0].casefold().removesuffix('show')}"))
     title = _text(card.select_one(".show-listing-headliner"))
     if not title:
         title = _text(card.select_one(".show-listing-title-contain"))
@@ -123,8 +124,6 @@ async def collect_earl(
         try:
             soup = BeautifulSoup(await fetch_bytes(client, next_url), "html.parser")
             cards = soup.select(".cl-layout__item")
-            if not cards:
-                raise ValueError("Missing EARL event cards")
             result.records_seen += len(cards)
             for card in cards:
                 try:
@@ -162,18 +161,14 @@ def _fernbank_event(html: bytes, url: str, card: Tag) -> ParsedEvent:
     listing_only = article is None
     article = card if article is None else article
     title = _text(article.select_one("h4" if listing_only else "h2"))
+    # "Friday, October 2, 2026 2:00 PM – 2:30 PM"; the end time is optional.
     published_time = _text(article.select_one("h5" if listing_only else "h4"))
-    match = re.fullmatch(
-        r"([A-Za-z]+, [A-Za-z]+ \d{1,2}, \d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)"
-        r"(?:\s*[-–—]\s*(\d{1,2}:\d{2}\s*[AP]M))?",
-        published_time,
-        re.I,
-    )
-    if not match:
+    start_text, *end_text = re.split(r"\s*[-–—]\s*", published_time, maxsplit=1)
+    if not re.search(r"\d:\d{2}\s*[AP]M", start_text, re.I):
         raise ValueError("Missing explicit Fernbank date and start time")
-    day, start, end = match.groups()
-    starts_at = _local(f"{day} {start}", "%A, %B %d, %Y %I:%M %p")
-    ends_at = _local(f"{day} {end}", "%A, %B %d, %Y %I:%M %p") if end else None
+    start = parser.parse(start_text)
+    starts_at = _local(start)
+    ends_at = _local(parser.parse(end_text[0], default=start)) if end_text else None
     invalid_end = ends_at is not None and ends_at <= starts_at
     if invalid_end:
         # The publisher sometimes displays 12:00 AM as a placeholder end time.
