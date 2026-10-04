@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from html import unescape
 from zoneinfo import ZoneInfo
@@ -21,7 +22,7 @@ from app.ingestion.parsing import (
     validation_message,
 )
 from app.ingestion.parsing import text as _text
-from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 FEED_URL = "https://www.trumba.com/calendars/emory-events.json"
@@ -130,10 +131,8 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
         all_day=event.allDay,
         start_date=start_date,
         end_date=end_date,
-        timezone=_TIMEZONE.key,
         venue=_text(event.location) or None,
         location_kind=_LOCATION_TYPES.get(event.locationType, "unknown"),
-        region="atlanta",
         price_status=price_status,
         price_details=price_details,
         audience=audience,
@@ -154,10 +153,10 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
     )
 
 
-def parse_feed(payload: bytes) -> ParsedFeed:
+def parse_feed(payload: bytes) -> SourceCollection:
     """Normalize source fields without turning registration defaults into prices."""
     records = _JSON_EVENTS.validate_json(payload)
-    result = ParsedFeed(events=[], records_seen=len(records), issues=[])
+    result = SourceCollection(records_seen=len(records))
     for raw in records:
         external_id = str(raw["eventID"]) if "eventID" in raw else None
         try:
@@ -194,7 +193,6 @@ async def collect(
             "previousweeks": "0",
             "events": str(_PAGE_LIMIT),
         }
-        result = SourceCollection(events=[], records_seen=0, issues=[])
         try:
             async with semaphore:
                 payload = await fetch_bytes(client, FEED_URL, params=params)
@@ -205,30 +203,27 @@ async def collect(
                 if isinstance(exc, httpx.HTTPStatusError)
                 else type(exc).__name__
             )
-            result.issues.append(ParseIssue(None, f"Emory slice {start} ({days} days): {reason}"))
-            return result
+            issue = ParseIssue(None, f"Emory slice {start} ({days} days): {reason}")
+            return SourceCollection(issues=[issue])
         if parsed.records_seen >= _PAGE_LIMIT and days > 1:
             left = days // 2
-            children = await asyncio.gather(
-                fetch_slice(start, left), fetch_slice(start + timedelta(days=left), days - left)
+            return _combine(
+                await asyncio.gather(
+                    fetch_slice(start, left), fetch_slice(start + timedelta(days=left), days - left)
+                )
             )
-            for child in children:
-                result.events.extend(child.events)
-                result.records_seen += child.records_seen
-                result.issues.extend(child.issues)
-            return result
-        result.events = parsed.events
-        result.records_seen = parsed.records_seen
-        result.issues.extend(parsed.issues)
         if parsed.records_seen >= _PAGE_LIMIT:
-            result.issues.append(
+            parsed.issues.append(
                 ParseIssue(
                     None, f"Emory slice {start} reached {_PAGE_LIMIT} events; incomplete day"
                 )
             )
-        return result
+        return parsed
 
-    collections = await asyncio.gather(*(fetch_slice(start, days) for start, days in slices))
+    return _combine(await asyncio.gather(*(fetch_slice(start, days) for start, days in slices)))
+
+
+def _combine(collections: Sequence[SourceCollection]) -> SourceCollection:
     return SourceCollection(
         events=[event for collection in collections for event in collection.events],
         records_seen=sum(collection.records_seen for collection in collections),

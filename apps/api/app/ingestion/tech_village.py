@@ -16,7 +16,6 @@ from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    CANCELLED_TITLE,
     MEMBERS_ONLY,
     described_price,
     http_url,
@@ -120,16 +119,13 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
         description=description,
         starts_at=starts_at,
         ends_at=ends_at,
-        timezone=_TIMEZONE.key,
         venue=venue or None,
         location_kind=location_kind(venue),
-        region="atlanta",
         audience=audience,
         price_status=price_status,
         price_details=price_details,
         source_url=HttpUrl(listing.url),
         registration_url=HttpUrl(registration) if registration else None,
-        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         external_id=listing.external_id,
@@ -150,7 +146,7 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
 async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
-    result = SourceCollection(events=[], records_seen=0, issues=[])
+    result = SourceCollection()
     listings: dict[str, _Listing] = {}
     url: str | None = LISTING_URL
     seen: set[str] = set()

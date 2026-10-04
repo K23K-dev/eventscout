@@ -5,7 +5,6 @@ from typing import Any
 from uuid import UUID
 
 from psycopg import AsyncConnection, sql
-from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 
 from app.storage.models import (
@@ -39,18 +38,8 @@ class EventStore:
 
     def __init__(self, connection: AsyncConnection[dict[str, Any]]) -> None:
         self._connection = connection
-        self._require_idle()
-
-    def _require_idle(self) -> None:
-        if (
-            self._connection.closed
-            or not self._connection.autocommit
-            or self._connection.info.transaction_status != TransactionStatus.IDLE
-        ):
-            raise ValueError("EventStore requires an idle autocommit connection")
 
     async def upsert_source(self, source: SourceInput) -> Source:
-        self._require_idle()
         async with self._connection.transaction():
             cursor = await self._connection.execute(
                 """
@@ -81,15 +70,10 @@ class EventStore:
         its own content and freshness; a failed member rolls back the entire group.
         The caller must establish duplicate evidence before requesting a merge.
         """
-        self._require_idle()
-        if not observations:
-            raise ValueError("an event group needs at least one observation")
         identities = [
             (observation.source_id, observation.external_id, observation.occurrence_key)
             for observation in observations
         ]
-        if len(set(identities)) != len(identities):
-            raise ValueError("an event group cannot repeat a source identity")
         contents = [observation.content.model_dump(mode="json") for observation in observations]
         content_hash = observations[0].content.content_hash()
         values = _content_values(observations[0].content)
@@ -132,8 +116,6 @@ class EventStore:
                 (list(targets), list(merge_ids)),
             )
             locked = {row["id"]: row for row in await cursor.fetchall()}
-            if targets - locked.keys():
-                raise ValueError("canonical event does not exist")
             if (
                 canonical_event_id is not None
                 and locked[canonical_event_id]["merged_into"] is not None

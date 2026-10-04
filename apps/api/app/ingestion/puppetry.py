@@ -11,8 +11,8 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import CANCELLED_TITLE, image_url, localize, text
-from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
+from app.ingestion.parsing import image_url, localize, text
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 CALENDAR_URL = "https://puppet.org/calendar"
@@ -53,16 +53,13 @@ def _performance(card: Tag) -> ParsedEvent:
         content=EventContent(
             title=title,
             description=f"Program dates: {summary}" if summary else "",
-            starts_at=local,
             # The calendar provides start times, not individual performance ends.
-            timezone=_ZONE.key,
+            starts_at=local,
             venue="Center for Puppetry Arts, 1404 Spring Street NW, Atlanta, GA 30309",
             location_kind="in_person",
-            region="atlanta",
             tags=[category],
             source_url=HttpUrl(program),
             registration_url=HttpUrl(booking),
-            status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
         ),
         source_updated_at=None,
         raw_payload={
@@ -79,14 +76,14 @@ def _performance(card: Tag) -> ParsedEvent:
     )
 
 
-def _month(html: bytes, month: datetime) -> ParsedFeed:
+def _month(html: bytes, month: datetime) -> SourceCollection:
     soup = BeautifulSoup(html, "html.parser")
     if month.strftime("%B %Y") not in {text(heading) for heading in soup.select("h2")}:
         raise ValueError("Calendar did not return the requested month")
     cards = soup.select("article.calendar-event-popover")
     if len(cards) > 2500:
         raise ValueError("Month calendar exceeds the 2500-card limit")
-    result = ParsedFeed([], len(cards), [])
+    result = SourceCollection(records_seen=len(cards))
     for card in cards:
         category = _text(card, ".calendar-event-popover__type")
         # Daily museum/exhibition admission is an opening schedule, not a
@@ -104,7 +101,7 @@ async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Read each public month once, respecting the publisher's 30-second delay."""
-    result = SourceCollection([], 0, [])
+    result = SourceCollection()
     current = window_start.astimezone(_ZONE).replace(day=1)
     last = window_end.astimezone(_ZONE).replace(day=1)
     if (last.year - current.year) * 12 + last.month - current.month > 3:

@@ -2,8 +2,9 @@
 
 import hashlib
 import json
+import re
 from datetime import UTC, date, datetime
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -17,6 +18,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+_CANCELLED_TITLE = re.compile(r"^[\s*\[(]*(?:cancelled|canceled)\b", re.I)
 
 
 class _FrozenModel(BaseModel):
@@ -47,7 +50,7 @@ class EventContent(_FrozenModel):
     timezone: str = "America/New_York"
     venue: str | None = None
     location_kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
-    region: Literal["gt", "atlanta"]
+    region: Literal["gt", "atlanta"] = "atlanta"
     price_status: Literal["free", "paid", "conditional", "unknown"] = "unknown"
     price_details: str | None = None
     audience: list[str] = Field(default_factory=list)
@@ -55,6 +58,14 @@ class EventContent(_FrozenModel):
     source_url: HttpUrl
     registration_url: HttpUrl | None = None
     status: Literal["scheduled", "cancelled"] = "scheduled"
+
+    @model_validator(mode="before")
+    @classmethod
+    def cancelled_title(cls, data: Any) -> Any:
+        # Publishers often cancel an event only by renaming it ("CANCELLED: ...").
+        if isinstance(data, dict) and _CANCELLED_TITLE.match(str(data.get("title", ""))):
+            return {**data, "status": "cancelled"}
+        return data
 
     @field_validator("starts_at", "ends_at")
     @classmethod

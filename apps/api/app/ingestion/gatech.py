@@ -14,17 +14,17 @@ from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    CANCELLED_TITLE,
     REGISTRATION,
     PriceStatus,
     cost_price,
     described_price,
     http_url,
+    issue_message,
     location_kind,
     text,
     validation_message,
 )
-from app.ingestion.records import ParsedEvent, ParsedFeed, ParseIssue, SourceCollection
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 _LABELS = (
@@ -68,39 +68,23 @@ async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Every category view's records; the import keeps each event's newest version."""
-    result = SourceCollection(events=[], records_seen=0, issues=[])
+    result = SourceCollection()
     semaphore = asyncio.Semaphore(2)
 
-    async def download(term: int) -> bytes | Exception:
+    async def feed(term: int) -> SourceCollection:
         async with semaphore:
-            try:
-                return await fetch_bytes(
-                    client, f"https://calendar.gatech.edu/taxonomy/term/{term}/feed"
-                )
-            except Exception as exc:
-                return exc
+            url = f"https://calendar.gatech.edu/taxonomy/term/{term}/feed"
+            return parse_feed(await fetch_bytes(client, url))
 
-    responses = await asyncio.gather(*(download(term) for term in FEEDS.values()))
-    for name, response in zip(FEEDS, responses, strict=True):
-        if isinstance(response, Exception):
+    feeds = await asyncio.gather(*(feed(term) for term in FEEDS.values()), return_exceptions=True)
+    for name, parsed in zip(FEEDS, feeds, strict=True):
+        if isinstance(parsed, BaseException):
             if name == "student":
                 result.warnings.append(
                     "Student-sponsored feed is unavailable; coverage of that category is partial"
                 )
-                continue
-            result.issues.append(
-                ParseIssue(None, f"{name}: download failed ({type(response).__name__})")
-            )
-            continue
-        try:
-            parsed = parse_feed(response)
-        except ValueError as exc:
-            if name == "student":
-                result.warnings.append(
-                    "Student-sponsored feed is unavailable; coverage of that category is partial"
-                )
-                continue
-            result.issues.append(ParseIssue(None, f"{name}: {exc}"))
+            else:
+                result.issues.append(ParseIssue(None, f"{name}: {issue_message(parsed)}"))
             continue
         result.records_seen += parsed.records_seen
         result.issues.extend(parsed.issues)
@@ -318,7 +302,6 @@ def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
         tags=tags,
         source_url=source_url,
         registration_url=_registration_url(soup, str(source_url), description),
-        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         external_id=external_id,
@@ -335,7 +318,7 @@ def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
     )
 
 
-def parse_feed(xml: bytes) -> ParsedFeed:
+def parse_feed(xml: bytes) -> SourceCollection:
     """Return all valid records so callers can merge revisions before filtering dates.
 
     Invalid records become issues; invalid XML/feed structure fails the entire feed
@@ -350,7 +333,7 @@ def parse_feed(xml: bytes) -> ParsedFeed:
     if root.tag != "rss" or root.find("channel") is None:
         raise ValueError("Expected a Georgia Tech RSS channel")
     items = root.findall("./channel/item")
-    result = ParsedFeed(events=[], records_seen=len(items), issues=[])
+    result = SourceCollection(records_seen=len(items))
     identities = Counter((item.findtext("guid") or "").strip() for item in items)
     for item in items:
         external_id = (item.findtext("guid") or "").strip()

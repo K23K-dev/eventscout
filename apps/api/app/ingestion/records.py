@@ -24,22 +24,15 @@ class ParseIssue:
 
 
 @dataclass
-class ParsedFeed:
-    events: list[ParsedEvent]
-    records_seen: int
-    issues: list[ParseIssue]
-
-
-@dataclass
 class SourceCollection:
     """Fetched observations; the runner admits new events only inside its window.
 
     Keep already-fetched dates outside the window so known occurrences can move.
     """
 
-    events: list[ParsedEvent]
-    records_seen: int
-    issues: list[ParseIssue]
+    events: list[ParsedEvent] = field(default_factory=list)
+    records_seen: int = 0
+    issues: list[ParseIssue] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 

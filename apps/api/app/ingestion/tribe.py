@@ -15,7 +15,6 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    CANCELLED_TITLE,
     MEMBERS_ONLY,
     cost_price,
     image_url,
@@ -154,14 +153,12 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         timezone=zone,
         venue=location or None,
         location_kind=location_kind(location),
-        region="atlanta",
         price_status=price_status,
         price_details=price_details,
         audience=audience,
         tags=tags,
         source_url=source_url,
         registration_url=HttpUrl(registration) if registration else None,
-        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     # WordPress publishes several sizes; the 768px one suits event cards.
     image = event.get("image")
@@ -186,7 +183,7 @@ async def collect(
     The API's overlapping-date filters include ongoing exhibitions. Perpetual
     self-guided attractions and events in explicitly excluded cities are omitted.
     """
-    result = SourceCollection(events=[], records_seen=0, issues=[])
+    result = SourceCollection()
     seen: set[str] = set()
     skipped = 0
     corrected_ends = 0

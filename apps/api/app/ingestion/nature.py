@@ -11,7 +11,7 @@ from dateutil import parser
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import CANCELLED_TITLE, localize, location_kind
+from app.ingestion.parsing import localize, location_kind
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -64,11 +64,9 @@ def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
         starts_at=begins,
         ends_at=finishes,
         venue=venue,
-        region="atlanta",
         location_kind=location_kind(venue),
         tags=tags,
         source_url=HttpUrl(url),
-        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         identity[1],
@@ -86,7 +84,7 @@ async def collect_trees(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
     """Fetch the calendar's visible month filters; each returns that month's full list."""
-    result = SourceCollection([], 0, [])
+    result = SourceCollection()
     current = window_start.astimezone(EASTERN).replace(day=1)
     last = window_end.astimezone(EASTERN)
     while (current.year, current.month) <= (last.year, last.month):
@@ -141,11 +139,9 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
         starts_at=begins,
         ends_at=finishes if finishes > begins else None,
         venue=venue,
-        region="atlanta",
         location_kind=location_kind(venue),
         tags=["outdoors", "community"],
         source_url=HttpUrl(url),
-        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         urlsplit(url).path,
@@ -160,7 +156,7 @@ async def collect_south_fork(
 ) -> SourceCollection:
     document = BeautifulSoup(await fetch_bytes(client, SOUTH_FORK_URL), "html.parser")
     cards = document.select("article.eventlist-event")
-    result = SourceCollection([], len(cards), [])
+    result = SourceCollection(records_seen=len(cards))
     for card in cards:
         try:
             event = _south_fork_event(card)

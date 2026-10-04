@@ -13,7 +13,6 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    CANCELLED_TITLE,
     described_price,
     http_url,
     issue_message,
@@ -96,7 +95,6 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
         all_day=all_day,
         start_date=start_date,
         end_date=start_date + timedelta(days=1) if start_date is not None else None,
-        timezone="America/New_York",
         venue=venue or None,
         location_kind=location_kind(venue or detail_venue),
         region="gt",
@@ -105,7 +103,6 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
         tags=[category] if category else [],
         source_url=HttpUrl(url),
         registration_url=HttpUrl(registration_url) if registration_url else None,
-        status="cancelled" if CANCELLED_TITLE.match(title) else "scheduled",
     )
     return ParsedEvent(
         external_id=f"node:{node_id}",
@@ -137,7 +134,7 @@ async def collect(
     Library's Atlanta timezone. Missing fees and audience restrictions remain unknown.
     Individual failures are returned as issues so a partial import cannot look complete.
     """
-    result = SourceCollection(events=[], records_seen=0, issues=[])
+    result = SourceCollection()
     listings: dict[str, str] = {}
     visited: set[str] = set()
     next_url: str | None = LISTING_URL

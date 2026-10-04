@@ -19,6 +19,7 @@ from app.storage.models import EventContent, EventObservation
 from app.storage.store import EventStore, StaleObservationError
 
 logger = logging.getLogger(__name__)
+_PRIORITY = {slug: index for index, slug in enumerate(SOURCES)}
 
 
 @dataclass
@@ -26,12 +27,9 @@ class SourceReport:
     source: str
     publisher: str
     records_seen: int = 0
-    eligible_records: int = 0
     created: int = 0
     updated: int = 0
     unchanged: int = 0
-    linked: int = 0
-    merged: int = 0
     issues: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -43,8 +41,6 @@ class ImportReport:
     window_end: str
     sources: list[SourceReport] = field(default_factory=list)
     unique_events: int = 0
-    duplicate_source_records: int = 0
-    catalog: dict[str, int] = field(default_factory=dict)
     preview: list[dict[str, object]] = field(default_factory=list)
 
     @property
@@ -99,10 +95,10 @@ async def _collect(
                 key=lambda event: event.source_updated_at or datetime.min.replace(tzinfo=UTC),
             )
             events.append(chosen)
-        summary.eligible_records = sum(in_window(event.content, start, end) for event in events)
-        logger.info("%s: %s eligible records", source.config.name, summary.eligible_records)
         observations.extend(
-            Observation(source.config.slug, source.config.publisher, source.priority, event)
+            Observation(
+                source.config.slug, source.config.publisher, _PRIORITY[source.config.slug], event
+            )
             for event in events
         )
     return observations
@@ -123,13 +119,12 @@ async def _catalog(connection: AsyncConnection[dict[str, Any]]) -> list[CatalogR
         canonical = EventContent.model_validate(
             {name: row["canonical_content"][name] for name in EventContent.model_fields}
         )
-        source = SOURCES.get(row["slug"])
         records.append(
             CatalogRecord(
                 source=row["slug"],
                 publisher=row["publisher"],
                 external_id=row["external_id"],
-                priority=source.priority if source else 1000,
+                priority=_PRIORITY.get(row["slug"], len(_PRIORITY)),
                 event_id=row["event_id"],
                 canonical_content=canonical,
                 content=EventContent.model_validate(row["observed_content"])
@@ -178,7 +173,6 @@ def _groups(
         )
     ]
     report.unique_events = len(upcoming)
-    report.duplicate_source_records = sum(len(group.observations) - 1 for group in upcoming)
     for group in groups:
         if group.conflict:
             for member in group.observations:
@@ -186,29 +180,6 @@ def _groups(
                 if warning not in summaries[member.source].warnings:
                     summaries[member.source].warnings.append(warning)
     return groups
-
-
-async def catalog_metrics(
-    connection: AsyncConnection[dict[str, Any]], start: datetime, end: datetime
-) -> dict[str, int]:
-    cursor = await connection.execute(
-        """WITH live AS (
-             SELECT id FROM eventscout.event_occurrences
-             WHERE merged_into IS NULL AND status = 'scheduled' AND CASE WHEN all_day THEN
-               (start_date::timestamp AT TIME ZONE timezone) < %(end)s AND
-               (COALESCE(end_date, start_date + 1)::timestamp AT TIME ZONE timezone) > %(start)s
-             ELSE starts_at < %(end)s AND COALESCE(ends_at > %(start)s, starts_at >= %(start)s) END
-           ) SELECT count(DISTINCT live.id) AS upcoming_unique_events,
-             count(DISTINCT r.source_id) AS calendars,
-             count(DISTINCT s.publisher) AS publishers,
-             count(*) AS source_records
-           FROM live JOIN eventscout.source_records r ON r.event_id = live.id
-           JOIN eventscout.sources s ON s.id = r.source_id""",
-        {"start": start, "end": end},
-    )
-    row = await cursor.fetchone()
-    assert row is not None
-    return {key: int(value) for key, value in row.items()}
 
 
 async def run_import(
@@ -250,7 +221,6 @@ async def run_import(
         source_ids: dict[str, UUID] = {}
         summaries = {summary.source: summary for summary in report.sources}
         catalog = await _catalog(connection)
-        identities = {(row.source, row.external_id) for row in catalog}
         for source in sources:
             source_ids[source.config.slug] = (await store.upsert_source(source.config)).id
         observations = await _collect(sources, start, end, report)
@@ -290,18 +260,14 @@ async def run_import(
                                 "group unchanged"
                             )
                         continue
-                    summaries[members[0].source].merged += len(group.merge_ids)
                     for member, result in zip(members, results, strict=True):
                         summary = summaries[member.source]
-                        if result.changed:
-                            if result.content_version == 1:
-                                summary.created += 1
-                            else:
-                                summary.updated += 1
-                        elif (member.source, member.event.external_id) not in identities:
-                            summary.linked += 1
-                        else:
+                        if not result.changed:
                             summary.unchanged += 1
+                        elif result.content_version == 1:
+                            summary.created += 1
+                        else:
+                            summary.updated += 1
                     completed += 1
                     if completed % 250 == 0 or completed == len(groups):
                         logger.info("Stored %s/%s unique event groups", completed, len(groups))
@@ -309,5 +275,4 @@ async def run_import(
         async with asyncio.TaskGroup() as tasks:
             for _ in range(min(4, len(groups))):
                 tasks.create_task(worker())
-        report.catalog = await catalog_metrics(connection, start, end)
     return report

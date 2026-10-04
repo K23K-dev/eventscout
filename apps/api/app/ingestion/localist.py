@@ -21,8 +21,8 @@ from app.ingestion.icalendar_feed import (
     calendar_text,
     parse_calendar_events,
 )
-from app.ingestion.parsing import CANCELLED_TITLE, location_kind
-from app.ingestion.records import ParsedEvent, ParsedFeed, SourceCollection
+from app.ingestion.parsing import location_kind
+from app.ingestion.records import ParsedEvent, SourceCollection
 from app.storage.models import EventContent
 
 FEED_URL = "https://calendar.gsu.edu/calendar/1.ics"
@@ -86,15 +86,11 @@ def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
         end_date=(ends or starts + timedelta(days=1))
         if all_day and not isinstance(ends, datetime)
         else None,
-        timezone="America/New_York",
         venue=venue or None,
         location_kind=location_kind(venue),
-        region="atlanta",
         tags=tags,
         source_url=HttpUrl(url),
-        status="cancelled"
-        if status == "CANCELLED" or CANCELLED_TITLE.match(title)
-        else "scheduled",
+        status="cancelled" if status == "CANCELLED" else "scheduled",
     )
     raw_tags: list[JsonValue] = list(tags)
     return ParsedEvent(
@@ -117,7 +113,7 @@ def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
     )
 
 
-def parse_feed(data: bytes, *, publisher_host: str = "calendar.gsu.edu") -> tuple[ParsedFeed, int]:
+def parse_feed(data: bytes, publisher_host: str) -> tuple[SourceCollection, int]:
     """Parse expanded occurrences without conflating a series or its moving dates."""
     components = calendar_events(data)
     parent_urls = {str(component.get("URL", "")) for component in components} - {""}
@@ -202,15 +198,11 @@ async def collect(
 ) -> SourceCollection:
     host = str(urlsplit(url).hostname)
     parsed, parent_count = parse_feed(await fetch_bytes(client, url), publisher_host=host)
-    return SourceCollection(
-        events=[event for event in parsed.events if _discovery_event(event)],
-        records_seen=parsed.records_seen,
-        issues=parsed.issues,
-        warnings=[
+    parsed.events = [event for event in parsed.events if _discovery_event(event)]
+    if parent_count >= _PARENT_EXPORT_LIMIT:
+        parsed.warnings.append(
             f"Public subscription export contains {parent_count:,} parent events and "
             f"{parsed.records_seen:,} occurrences; it reached the 1,000 parent-event "
             "limit, so coverage is partial"
-        ]
-        if parent_count >= _PARENT_EXPORT_LIMIT
-        else [],
-    )
+        )
+    return parsed

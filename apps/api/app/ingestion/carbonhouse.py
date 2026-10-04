@@ -16,7 +16,6 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    CANCELLED_TITLE,
     cost_price,
     described_price,
     http_url,
@@ -117,13 +116,9 @@ def _parse_detail(html: bytes, url: str, default_venue: str) -> tuple[list[Parse
                 ends_at = schema_end
         ticket = showing.select_one("a.tickets[href]")
         registration = _url(ticket.get("href"), url) if ticket else None
-        cancelled = (
-            schema.get("eventStatus") == "https://schema.org/EventCancelled"
-            or CANCELLED_TITLE.match(title) is not None
-            or any(
-                re.fullmatch(r"cancel(?:led|ed)[.!]?", string, re.I)
-                for string in showing.stripped_strings
-            )
+        cancelled = schema.get("eventStatus") == "https://schema.org/EventCancelled" or any(
+            re.fullmatch(r"cancel(?:led|ed)[.!]?", string, re.I)
+            for string in showing.stripped_strings
         )
         performer = schema.get("performer")
         sports = isinstance(performer, dict) and performer.get("@type") == "SportsTeam"
@@ -137,7 +132,6 @@ def _parse_detail(html: bytes, url: str, default_venue: str) -> tuple[list[Parse
                     ends_at=ends_at,
                     venue=venue,
                     location_kind="in_person",
-                    region="atlanta",
                     price_status=price_status,
                     price_details=price_details,
                     tags=["Sports" if sports else "Live performance"],
@@ -172,7 +166,7 @@ async def collect(
     Stable showing IDs keep separate performances distinct without treating a
     multiweek production's first and last dates as one continuous event.
     """
-    result = SourceCollection([], 0, [])
+    result = SourceCollection()
     parts = urlsplit(calendar_url)
     origin = f"{parts.scheme}://{parts.netloc}"
     current = window_start.astimezone(_ZONE).replace(day=1)

@@ -14,7 +14,6 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    CANCELLED_TITLE,
     MEMBERS_ONLY,
     cost_price,
     location_kind,
@@ -157,16 +156,11 @@ def _parse(
         None,
     )
     status = _content(event, 'meta[itemprop="eventStatus"]') or ""
-    cancelled = (
-        calendar_cancelled
-        or status
-        in {
-            "EventCancelled",
-            "https://schema.org/EventCancelled",
-            "http://schema.org/EventCancelled",
-        }
-        or CANCELLED_TITLE.match(title)
-    )
+    cancelled = calendar_cancelled or status in {
+        "EventCancelled",
+        "https://schema.org/EventCancelled",
+        "http://schema.org/EventCancelled",
+    }
     return ParsedEvent(
         external_id=item.external_id,
         content=EventContent(
@@ -177,10 +171,8 @@ def _parse(
             start_date=start_date,
             end_date=end_date,
             all_day=all_day,
-            timezone=_TIMEZONE.key,
             venue=venue or None,
             location_kind=kind,
-            region="atlanta",
             audience=audience,
             price_status=price,
             price_details=price_details,
@@ -212,7 +204,7 @@ async def collect(
     window_start: datetime,
     window_end: datetime,
 ) -> SourceCollection:
-    result = SourceCollection(events=[], records_seen=0, issues=[])
+    result = SourceCollection()
     listings: dict[str, _Listing] = {}
     month = window_start.astimezone(_TIMEZONE).date().replace(day=1)
     last = window_end.astimezone(_TIMEZONE).date().replace(day=1)

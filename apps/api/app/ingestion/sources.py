@@ -12,11 +12,8 @@ from pydantic import HttpUrl
 from app.ingestion import (
     carbonhouse,
     chambermaster,
-    civic,
     communico,
-    culture,
     gatech,
-    icalendar_feed,
     library,
     localist,
     nature,
@@ -38,45 +35,38 @@ class Collector(Protocol):
 @dataclass(frozen=True)
 class CalendarSource:
     config: SourceInput
-    priority: int
     collect: Collector
 
 
-def _source(
-    slug: str, publisher: str, name: str, url: str, priority: int, collect: Collector
-) -> CalendarSource:
+def _source(slug: str, publisher: str, name: str, url: str, collect: Collector) -> CalendarSource:
     return CalendarSource(
-        SourceInput(slug=slug, publisher=publisher, name=name, url=HttpUrl(url)),
-        priority,
-        collect,
+        SourceInput(slug=slug, publisher=publisher, name=name, url=HttpUrl(url)), collect
     )
 
 
+# When several calendars list the same event, the earliest one here supplies its details.
 SOURCES = {
     source.config.slug: source
     for source in (
-        _source(
-            "gt-calendar",
-            "Georgia Tech",
-            "Georgia Tech Campus Calendar",
-            "https://calendar.gatech.edu/rss-feeds",
-            1,
-            gatech.collect,
-        ),
         _source(
             "gt-library",
             "Georgia Tech",
             "Georgia Tech Library",
             "https://library.gatech.edu/events-workshops",
-            0,
             library.collect,
+        ),
+        _source(
+            "gt-calendar",
+            "Georgia Tech",
+            "Georgia Tech Campus Calendar",
+            "https://calendar.gatech.edu/rss-feeds",
+            gatech.collect,
         ),
         _source(
             "emory-calendar",
             "Emory University",
             "Emory Events",
             "https://www.emory.edu/events",
-            2,
             trumba.collect,
         ),
         _source(
@@ -84,7 +74,6 @@ SOURCES = {
             "Georgia State University",
             "Georgia State Events",
             "https://calendar.gsu.edu",
-            3,
             localist.collect,
         ),
         _source(
@@ -92,7 +81,6 @@ SOURCES = {
             "Kennesaw State University",
             "Kennesaw State Events",
             "https://calendar.kennesaw.edu",
-            4,
             partial(localist.collect, url="https://calendar.kennesaw.edu/calendar.ics"),
         ),
         _source(
@@ -100,7 +88,6 @@ SOURCES = {
             "Agnes Scott College",
             "Agnes Scott Events",
             "https://calendar.agnesscott.edu",
-            5,
             partial(localist.collect, url="https://calendar.agnesscott.edu/calendar.ics"),
         ),
         _source(
@@ -108,7 +95,6 @@ SOURCES = {
             "DeKalb County Public Library",
             "DeKalb Library Events",
             "https://events.dekalblibrary.org/events",
-            6,
             partial(communico.collect, library="dekalb"),
         ),
         _source(
@@ -116,40 +102,13 @@ SOURCES = {
             "Gwinnett County Public Library",
             "Gwinnett Library Events",
             "https://gwinnettpl.libnet.info/events",
-            7,
             partial(communico.collect, library="gwinnettpl"),
-        ),
-        _source(
-            "auc-connect",
-            "Atlanta University Center Consortium",
-            "AUC Connect",
-            "https://connect.aucenter.edu/events",
-            8,
-            partial(
-                icalendar_feed.collect,
-                url="https://connect.aucenter.edu/ical/aucenter/ical_aucenter.ics",
-                source_page="https://connect.aucenter.edu/events",
-            ),
-        ),
-        _source(
-            "atlanta-ham-radio",
-            "Atlanta Ham Radio",
-            "Atlanta Ham Radio Public Service Events",
-            "https://atlantahamradio.org/pages/calendar-feed.html",
-            9,
-            partial(
-                icalendar_feed.collect,
-                url="https://atlantahamradio.org/events.ics",
-                source_page="https://atlantahamradio.org/pages/calendar-feed.html",
-                require_metro_venue=True,
-            ),
         ),
         _source(
             "trees-atlanta",
             "Trees Atlanta",
             "Trees Atlanta Events",
             nature.TREES_URL,
-            10,
             nature.collect_trees,
         ),
         _source(
@@ -157,7 +116,6 @@ SOURCES = {
             "South Fork Conservancy",
             "South Fork Conservancy Events",
             nature.SOUTH_FORK_URL,
-            11,
             nature.collect_south_fork,
         ),
         _source(
@@ -165,7 +123,6 @@ SOURCES = {
             "Piedmont Park Conservancy",
             "Piedmont Park Events",
             "https://piedmontpark.org/calendar/",
-            12,
             partial(
                 tribe.collect, api_url="https://piedmontpark.org/wp-json/tribe/events/v1/events"
             ),
@@ -175,31 +132,13 @@ SOURCES = {
             "Atlanta Tech Village",
             "Atlanta Tech Village Events",
             "https://atlantatechvillage.com/events",
-            14,
             tech_village.collect,
-        ),
-        _source(
-            "the-earl",
-            "THE EARL",
-            "THE EARL Live Music",
-            "https://badearl.com/",
-            16,
-            culture.collect_earl,
-        ),
-        _source(
-            "fernbank-museum",
-            "Fernbank Museum",
-            "Fernbank Museum Events",
-            "https://www.fernbankmuseum.org/events/calendar-of-events/",
-            17,
-            culture.collect_fernbank,
         ),
         _source(
             "travel-cobb",
             "Cobb Travel & Tourism",
             "Cobb Travel & Tourism Events",
             "https://travelcobb.org/cobb-county-events/",
-            18,
             partial(
                 tribe.collect,
                 api_url="https://travelcobb.org/wp-json/tribe/events/v1/events",
@@ -211,7 +150,6 @@ SOURCES = {
             "ArtsATL",
             "ArtsATL Events",
             "https://www.artsatl.org/calendar/",
-            19,
             partial(
                 tribe.collect,
                 api_url="https://www.artsatl.org/wp-json/tribe/events/v1/events",
@@ -233,35 +171,10 @@ SOURCES = {
             ),
         ),
         _source(
-            "norcross",
-            "City of Norcross",
-            "Norcross Events",
-            "https://www.norcrossga.net/calendar.aspx?CID=22",
-            21,
-            partial(civic.collect, city="norcross"),
-        ),
-        _source(
-            "lilburn",
-            "City of Lilburn",
-            "Lilburn Events",
-            "https://www.cityoflilburn.com/calendar.aspx?CID=25",
-            22,
-            partial(civic.collect, city="lilburn"),
-        ),
-        _source(
-            "lawrenceville",
-            "City of Lawrenceville",
-            "Lawrenceville Events",
-            "https://www.lawrencevillega.org/calendar.aspx?CID=22",
-            23,
-            partial(civic.collect, city="lawrenceville"),
-        ),
-        _source(
             "dekalb-chamber",
             "DeKalb Chamber",
             "DeKalb Chamber Events",
             "https://business.dekalbchamber.org/events/calendar",
-            24,
             partial(
                 chambermaster.collect,
                 calendar_url="https://business.dekalbchamber.org/events/calendar",
@@ -273,7 +186,6 @@ SOURCES = {
             "Brookhaven Chamber",
             "Brookhaven Chamber Events",
             "https://biz.brookhavencommerce.org/events/calendar",
-            25,
             partial(
                 chambermaster.collect,
                 calendar_url="https://biz.brookhavencommerce.org/events/calendar",
@@ -285,7 +197,6 @@ SOURCES = {
             "Greater Perimeter Chamber",
             "Greater Perimeter Chamber Events",
             "https://business.greaterperimeterchamber.com/events/calendar",
-            26,
             partial(
                 chambermaster.collect,
                 calendar_url="https://business.greaterperimeterchamber.com/events/calendar",
@@ -297,7 +208,6 @@ SOURCES = {
             "Atlanta Symphony Orchestra",
             "Atlanta Symphony Orchestra Events",
             "https://www.aso.org/events",
-            27,
             partial(
                 carbonhouse.collect,
                 calendar_url="https://www.aso.org/events",
@@ -309,7 +219,6 @@ SOURCES = {
             "Fox Theatre",
             "Fox Theatre Events",
             "https://www.foxtheatre.org/events",
-            28,
             partial(
                 carbonhouse.collect,
                 calendar_url="https://www.foxtheatre.org/events",
@@ -321,7 +230,6 @@ SOURCES = {
             "State Farm Arena",
             "State Farm Arena Events",
             "https://www.statefarmarena.com/events",
-            29,
             partial(
                 carbonhouse.collect,
                 calendar_url="https://www.statefarmarena.com/events",
@@ -333,7 +241,6 @@ SOURCES = {
             "Center for Puppetry Arts",
             "Center for Puppetry Arts Performances",
             puppetry.CALENDAR_URL,
-            30,
             puppetry.collect,
         ),
     )

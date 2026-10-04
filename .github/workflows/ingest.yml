@@ -53,7 +53,7 @@ jobs:
         run: |
           {
             if [ -s report.json ]; then
-              jq -r '"**\(.catalog.upcoming_unique_events // "?") upcoming events** from \(.catalog.calendars // "?") calendars"' report.json
+              jq -r '"**\(.unique_events) upcoming events** from \([.sources[] | select(.records_seen > 0)] | length) calendars"' report.json
               echo
               echo '| Source | Seen | Created | Updated | Unchanged | Issues |'
               echo '| --- | ---: | ---: | ---: | ---: | ---: |'

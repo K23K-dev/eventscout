@@ -15,7 +15,6 @@ LocationKind = Literal["in_person", "online", "hybrid", "unknown"]
 PriceStatus = Literal["free", "paid", "conditional", "unknown"]
 
 MEMBERS_ONLY = re.compile(r"\bmembers?[- ]only\b", re.I)
-CANCELLED_TITLE = re.compile(r"^[\s*\[(]*(?:cancelled|canceled)\b", re.I)
 REGISTRATION = re.compile(r"\b(?:register|registration|rsvp|tickets?|sign[ -]?up)\b", re.I)
 
 _PLACEHOLDER_VENUE = re.compile(
@@ -162,7 +161,7 @@ def validation_message(exc: ValidationError) -> str:
     return f"Invalid event fields: {fields}"
 
 
-def issue_message(exc: Exception) -> str:
+def issue_message(exc: BaseException) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
     if isinstance(exc, ValidationError):
