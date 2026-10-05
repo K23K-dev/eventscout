@@ -1,7 +1,7 @@
 import { Compass, LogOut, MessageCircle } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
 import { Link, NavLink, useLocation, useNavigationType } from 'react-router-dom'
-import { cn } from '@/lib/utils'
+import { cn } from '@/utils/cn'
 import { signIn, signOut, useSession } from '@/lib/auth'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button, buttonVariants } from '@/components/ui/button'

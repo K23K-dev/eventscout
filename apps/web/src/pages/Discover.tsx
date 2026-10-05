@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { createElement, useRef, type FormEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { cn } from '@/lib/utils'
+import { cn } from '@/utils/cn'
 import { fetchEvents, type Event } from '@/lib/api'
 import { DateRangePicker } from '@/components/DateRangePicker'
 import { EventTile } from '@/components/EventCard'
@@ -25,8 +25,8 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toggle } from '@/components/ui/toggle'
-import { calendarDate, dateRange, dateWindow, dayHeading, span } from '@/lib/events'
-import { topics } from '@/lib/topics'
+import { calendarDate, dateRange, dateWindow, dayHeading, span } from '@/utils/format'
+import { topics } from '@/utils/topics'
 
 const filterKeys = ['q', 'date_from', 'date_to', 'region', 'price_status', 'topic', 'sort', 'page']
 const grid = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'

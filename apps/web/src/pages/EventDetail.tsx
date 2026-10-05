@@ -28,8 +28,8 @@ import {
   span,
   timeRange,
   today,
-} from '@/lib/events'
-import { topics } from '@/lib/topics'
+} from '@/utils/format'
+import { topics } from '@/utils/topics'
 
 export function EventDetail() {
   const { eventId = '' } = useParams()

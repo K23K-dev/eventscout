@@ -1,10 +1,10 @@
 import { MapPin } from 'lucide-react'
 import { createElement, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { cn } from '@/lib/utils'
+import { cn } from '@/utils/cn'
 import type { Event } from '@/lib/api'
-import { locationLabels, whenLabel } from '@/lib/events'
-import { topicOf, type Topic } from '@/lib/topics'
+import { locationLabels, whenLabel } from '@/utils/format'
+import { topicOf, type Topic } from '@/utils/topics'
 import { Badge } from '@/components/ui/badge'
 
 const priceTags: Partial<Record<Event['price_status'], string>> = {

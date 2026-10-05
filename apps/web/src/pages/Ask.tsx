@@ -3,7 +3,7 @@ import { ArrowUp, LoaderCircle, MessageCircle, PanelLeft, Plus, Trash2 } from 'l
 import { createElement, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
+import { cn } from '@/utils/cn'
 import {
   ApiError,
   askEvents,
@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { topics } from '@/lib/topics'
+import { topics } from '@/utils/topics'
 
 const stages: Record<Stage, string> = {
   understanding: 'Understanding your question…',
