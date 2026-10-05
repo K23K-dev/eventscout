@@ -100,9 +100,7 @@ async def search_events(
 async def _keyword_ranking(
     repository: EventRepository, text: str, filters: EventFilters, depth: int
 ) -> list[UUID]:
-    ranked = filters.model_copy(
-        update={"q": text or None, "sort": "relevance", "page": 1, "page_size": depth}
-    )
+    ranked = filters.model_copy(update={"q": text or None, "page": 1, "page_size": depth})
     return [event.id for event in (await repository.search(ranked)).items]
 
 

@@ -20,15 +20,6 @@ class ConversationStore:
         self._connection = connection
         self._owner = owner
 
-    async def find_turn(self, request_id: UUID) -> dict[str, Any] | None:
-        cursor = await self._connection.execute(
-            """SELECT t.* FROM eventscout.turns t
-               JOIN eventscout.conversations c ON c.id = t.conversation_id
-               WHERE t.request_id = %s AND c.owner_id = %s""",
-            (request_id, self._owner),
-        )
-        return await cursor.fetchone()
-
     async def create_conversation(self, title: str) -> UUID:
         cursor = await self._connection.execute(
             "INSERT INTO eventscout.conversations (owner_id, title) VALUES (%s, %s) RETURNING id",
@@ -70,21 +61,18 @@ class ConversationStore:
         )
         return cursor.rowcount > 0
 
-    async def previous(self, conversation_id: UUID) -> tuple[SearchState | None, list[UUID]]:
-        """The search in force and the events a follow-up like "the second one" can mean."""
+    async def previous(self, conversation_id: UUID) -> SearchState | None:
+        """The search in force after the latest answered turn, which follow-ups build on."""
         cursor = await self._connection.execute(
-            """SELECT search, shown FROM eventscout.turns
+            """SELECT search FROM eventscout.turns
                WHERE conversation_id = %s AND status = 'done'
                ORDER BY created_at DESC LIMIT 1""",
             (conversation_id,),
         )
         row = await cursor.fetchone()
-        if row is None:
-            return None, []
-        search = SearchState.model_validate(row["search"]) if row["search"] else None
-        return search, list(row["shown"])
+        return SearchState.model_validate(row["search"]) if row and row["search"] else None
 
-    async def start_turn(self, conversation_id: UUID, request_id: UUID, message: str) -> UUID:
+    async def start_turn(self, conversation_id: UUID, message: str) -> UUID:
         """Record a running turn; abandoned turns older than two minutes stop blocking."""
         try:
             async with self._connection.transaction():
@@ -97,8 +85,8 @@ class ConversationStore:
                 )
                 cursor = await self._connection.execute(
                     """INSERT INTO eventscout.turns (conversation_id, request_id, message)
-                       VALUES (%s, %s, %s) RETURNING id""",
-                    (conversation_id, request_id, message),
+                       VALUES (%s, gen_random_uuid(), %s) RETURNING id""",
+                    (conversation_id, message),
                 )
                 row = await cursor.fetchone()
         except UniqueViolation as exc:
@@ -106,16 +94,15 @@ class ConversationStore:
         assert row is not None
         return UUID(str(row["id"]))
 
-    async def finish_turn(self, turn_id: UUID, result: TurnResult, shown: list[UUID]) -> None:
+    async def finish_turn(self, turn_id: UUID, result: TurnResult) -> None:
         async with self._connection.transaction():
             cursor = await self._connection.execute(
                 """UPDATE eventscout.turns SET
-                       status = 'done', search = %s, shown = %s, cards = %s, reply = %s,
+                       status = 'done', search = %s, cards = %s, reply = %s,
                        clarification = %s, note = %s, broader = %s, finished_at = clock_timestamp()
                    WHERE id = %s RETURNING conversation_id""",
                 (
                     Jsonb(result.search.model_dump(mode="json")) if result.search else None,
-                    shown,
                     [event.id for event in result.cards],
                     result.reply,
                     result.clarification,

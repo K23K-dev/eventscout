@@ -12,9 +12,6 @@ class TurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     message: str = Field(min_length=1, max_length=500)
-    request_id: UUID = Field(
-        description="Chosen by the client; retrying with the same ID returns the same turn."
-    )
     conversation_id: UUID | None = Field(
         default=None, description="Omit to start a new conversation."
     )

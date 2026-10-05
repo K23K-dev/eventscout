@@ -35,7 +35,7 @@ export function addDays(date: string, days: number) {
   return value.toISOString().slice(0, 10)
 }
 
-export function isDate(value: string | null): value is string {
+function isDate(value: string | null): value is string {
   return (
     !!value &&
     value >= '1900-01-01' &&
@@ -53,7 +53,7 @@ export function dateWindow(params: URLSearchParams) {
   return { start, end: isDate(to) ? addDays(to, -1) : addDays(start, 29) }
 }
 
-export function formatDate(
+function formatDate(
   value: string,
   options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' },
 ) {

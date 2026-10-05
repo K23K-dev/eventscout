@@ -5,7 +5,6 @@ import {
   CalendarDays,
   CalendarPlus,
   Globe,
-  Link2,
   MapPin,
   Ticket,
   Users,
@@ -13,19 +12,15 @@ import {
 } from 'lucide-react'
 import { createElement, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
 import { ApiError, fetchEvent, type Event } from '@/lib/api'
 import { Cover, TopicBadge } from '@/components/EventCard'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
-  calendarDate,
   eventDate,
-  formatDate,
   googleCalendarUrl,
   locationLabels,
   priceLabels,
-  span,
   timeRange,
   today,
 } from '@/utils/format'
@@ -111,24 +106,12 @@ function EventInformation({ event }: { event: Event }) {
     !event.ends_at &&
     Boolean(event.starts_at && Date.parse(event.starts_at) <= now)
   const cancelled = event.status === 'cancelled'
-  const { start, end, multipleDays } = span(event)
-  const ongoing = !!(start && end && calendarDate(start) < day && !ended)
-  const sheet = start && (ongoing ? end : start)
   const google = !ended && !cancelled ? googleCalendarUrl(event) : null
   const action = ended
     ? 'View original event'
     : event.registration_url
       ? 'Get tickets'
       : 'Go to event page'
-
-  async function share() {
-    try {
-      await navigator.clipboard.writeText(window.location.href)
-      toast.success('Link copied')
-    } catch {
-      toast.error('Couldn’t copy the link.')
-    }
-  }
 
   return (
     <>
@@ -172,82 +155,30 @@ function EventInformation({ event }: { event: Event }) {
                 : 'Check the original listing for the latest information.'}
             </p>
           )}
-          {event.is_stale && (
-            <p className="mt-5 rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
-              <span className="font-medium">Needs a refresh.</span> Check the organizer’s listing
-              for the latest details.
-            </p>
-          )}
         </header>
 
         <aside
           aria-label="Plan your visit"
-          className="lg:sticky lg:top-20 lg:col-start-2 lg:row-span-2 lg:row-start-1"
+          className="grid gap-2 rounded-lg border bg-card p-4 lg:sticky lg:top-20 lg:col-start-2 lg:row-span-2 lg:row-start-1"
         >
-          <div className="rounded-lg border bg-card p-4">
-            <div className="flex items-center gap-3">
-              {sheet && (
-                <div
-                  className="w-11 shrink-0 overflow-hidden rounded-md border text-center"
-                  aria-hidden="true"
-                >
-                  <p className="border-b bg-secondary py-px text-[10px] font-medium text-muted-foreground uppercase">
-                    {ongoing ? 'Until' : formatDate(sheet, { month: 'short' })}
-                  </p>
-                  <p className="py-0.5 text-lg font-semibold tabular-nums">
-                    {formatDate(sheet, { day: 'numeric' })}
-                  </p>
-                </div>
-              )}
-              <div className="min-w-0 text-sm">
-                <p className="font-medium">
-                  {!start
-                    ? 'Date to be announced'
-                    : ongoing
-                      ? `On now, until ${formatDate(end!, { month: 'long', day: 'numeric' })}`
-                      : multipleDays
-                        ? `${formatDate(start, { month: 'short', day: 'numeric' })} – ${formatDate(end!, { month: 'short', day: 'numeric' })}`
-                        : formatDate(start, { weekday: 'long', month: 'long', day: 'numeric' })}
-                </p>
-                <p className="text-muted-foreground">
-                  {timeRange(event)} · {priceLabels[event.price_status]}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 grid gap-2">
-              <Button asChild className="w-full">
-                <a
-                  href={
-                    cancelled || ended
-                      ? event.source_url
-                      : event.registration_url || event.source_url
-                  }
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {cancelled ? 'Original listing' : action} <ArrowUpRight aria-hidden="true" />
-                </a>
-              </Button>
-              {google && (
-                <Button variant="outline" asChild className="w-full">
-                  <a href={google} target="_blank" rel="noreferrer">
-                    <CalendarPlus aria-hidden="true" /> Add to Google Calendar
-                  </a>
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                onClick={() => void share()}
-              >
-                <Link2 aria-hidden="true" /> Copy link
-              </Button>
-            </div>
-            <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">
-              Details can change. Confirm the time and access before heading out.
-            </p>
-          </div>
+          <Button asChild className="w-full">
+            <a
+              href={
+                cancelled || ended ? event.source_url : event.registration_url || event.source_url
+              }
+              target="_blank"
+              rel="noreferrer"
+            >
+              {cancelled ? 'Original listing' : action} <ArrowUpRight aria-hidden="true" />
+            </a>
+          </Button>
+          {google && (
+            <Button variant="outline" asChild className="w-full">
+              <a href={google} target="_blank" rel="noreferrer">
+                <CalendarPlus aria-hidden="true" /> Add to Google Calendar
+              </a>
+            </Button>
+          )}
         </aside>
 
         <div className="min-w-0 lg:col-start-1 lg:row-start-2">

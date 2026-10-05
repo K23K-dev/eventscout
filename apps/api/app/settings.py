@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     # Parses chat messages, writes answers, and summarizes events.
     openai_model: str = "gpt-5.6-luna"
     supabase_url: str | None = None
-    allow_chat_without_login: bool = False
 
     def missing(self, *names: str) -> list[str]:
         """Environment variables a command needs that are unset or blank."""

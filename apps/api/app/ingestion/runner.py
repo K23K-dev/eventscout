@@ -36,12 +36,10 @@ class SourceReport:
 
 @dataclass
 class ImportReport:
-    dry_run: bool
     window_start: str
     window_end: str
     sources: list[SourceReport] = field(default_factory=list)
     unique_events: int = 0
-    preview: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def failed(self) -> bool:
@@ -182,19 +180,15 @@ def _groups(
     return groups
 
 
-async def run_import(
-    settings: Settings,
-    *,
-    days: int = 90,
-    dry_run: bool = False,
-    source_names: list[str] | None = None,
-) -> ImportReport:
-    """Import selected calendars; repeat observations do not create canonical changes."""
+async def run_import(settings: Settings, *, source_names: list[str] | None = None) -> ImportReport:
+    """Import the next 90 days from the selected calendars (default: all of them).
+
+    Repeat observations do not create canonical changes.
+    """
     sources = [SOURCES[name] for name in dict.fromkeys(source_names or SOURCES)]
     start = datetime.now(UTC)
-    end = start + timedelta(days=days)
+    end = start + timedelta(days=90)
     report = ImportReport(
-        dry_run=dry_run,
         window_start=start.isoformat(),
         window_end=end.isoformat(),
         sources=[
@@ -202,13 +196,6 @@ async def run_import(
             for source in sources
         ],
     )
-    if dry_run:
-        groups = _groups(await _collect(sources, start, end, report), [], start, end, report)
-        report.preview = [
-            group.observations[0].event.content.model_dump(mode="json") for group in groups[:5]
-        ]
-        return report
-
     async with connect_database(settings) as connection:
         cursor = await connection.execute(
             "SELECT pg_try_advisory_lock("

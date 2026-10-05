@@ -29,14 +29,12 @@ from app.assistant.models import (
 from app.assistant.store import ConversationStore, TurnInProgress
 from app.auth import InvalidToken, KeysUnavailable, TokenVerifier
 from app.database import connect_database
-from app.events.models import CATALOG_TIMEZONE, EventResponse
+from app.events.models import CATALOG_TIMEZONE
 from app.events.repository import EventRepository
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-# With EVENTSCOUT_ALLOW_CHAT_WITHOUT_LOGIN (local scripts only), guests chat as this one owner.
-LOCAL_OWNER = UUID("00000000-0000-0000-0000-00000000c0de")
 _FAILED = "Something went wrong answering that. Please try again."
 
 
@@ -90,9 +88,6 @@ class StartedTurn:
     turn_id: UUID
     message: str
     previous: SearchState | None
-    shown: list[EventResponse]
-    replayed: bool = False
-    replay: TurnAnswer | None = None
 
 
 def create_assistant_router(settings: Settings, clients: AssistantClients) -> APIRouter:
@@ -107,8 +102,6 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
         """The signed-in account, whose ID owns its conversations."""
         challenge = {"WWW-Authenticate": "Bearer"}
         if credentials is None:
-            if settings.allow_chat_without_login:
-                return LOCAL_OWNER
             raise HTTPException(
                 status_code=401, detail="Sign in to use AI search.", headers=challenge
             )
@@ -142,28 +135,6 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
     async def start_turn(request: TurnRequest, owner: Owner, connection: Connection) -> StartedTurn:
         """Everything that can fail with a status code, before streaming begins."""
         store = ConversationStore(connection, owner)
-        repository = EventRepository(connection)
-        if (stored := await store.find_turn(request.request_id)) is not None:
-            if stored["status"] == "running":
-                raise HTTPException(status_code=409, detail="That message is still being answered.")
-            replay = None
-            if stored["status"] == "done":
-                replay = TurnAnswer(
-                    reply=stored["reply"],
-                    cards=await repository.get_by_ids(list(stored["cards"])),
-                    clarification=stored["clarification"],
-                    note=stored["note"],
-                )
-            return StartedTurn(
-                owner,
-                stored["conversation_id"],
-                stored["id"],
-                stored["message"],
-                None,
-                [],
-                replayed=True,
-                replay=replay,
-            )
         if settings.missing("openai_api_key", "pinecone_api_key"):
             raise HTTPException(status_code=503, detail="AI search isn't configured.")
         try:
@@ -179,21 +150,14 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
             raise HTTPException(status_code=404, detail="Conversation not found.")
         else:
             conversation_id = request.conversation_id
-        previous, shown = await store.previous(conversation_id)
+        previous = await store.previous(conversation_id)
         try:
-            turn_id = await store.start_turn(conversation_id, request.request_id, request.message)
+            turn_id = await store.start_turn(conversation_id, request.message)
         except TurnInProgress:
             raise HTTPException(
                 status_code=409, detail="Wait for the current answer to finish."
             ) from None
-        return StartedTurn(
-            owner,
-            conversation_id,
-            turn_id,
-            request.message,
-            previous,
-            await repository.get_by_ids(shown),
-        )
+        return StartedTurn(owner, conversation_id, turn_id, request.message, previous)
 
     async def write_answer(
         started: StartedTurn, events: asyncio.Queue[ServerSentEvent | None]
@@ -212,17 +176,12 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
                     turn: Turn = {}
                     async with clients.writing:
                         steps = run_turn(
-                            build_graph(services),
-                            started.message,
-                            today,
-                            started.previous,
-                            started.shown,
+                            build_graph(services), started.message, today, started.previous
                         )
                         async for node, turn in steps:
                             if node == "parse" and not turn.get("clarification"):
-                                stage = "writing" if turn.get("points_at") else "searching"
                                 events.put_nowait(
-                                    ServerSentEvent(event="status", data={"stage": stage})
+                                    ServerSentEvent(event="status", data={"stage": "searching"})
                                 )
                             elif node == "retrieve":
                                 candidates = turn.get("evidence", [])[:MAX_CARDS]
@@ -236,8 +195,7 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
                                 broader = {"stage": "searching", "broader": turn["broader"]}
                                 events.put_nowait(ServerSentEvent(event="status", data=broader))
                     result = turn_result(turn, started.previous)
-                    shown = result.cards if result.searched else started.shown
-                    await store.finish_turn(started.turn_id, result, [e.id for e in shown])
+                    await store.finish_turn(started.turn_id, result)
                 except Exception as exc:
                     logger.exception("Chat turn failed")
                     await store.fail_turn(started.turn_id, type(exc).__name__)
@@ -266,18 +224,10 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
 
         In order: `turn` (conversation and turn IDs); `status` updates (understanding,
         searching, writing); `results` with candidate events as soon as the search ends;
-        then `answer` and `done`, or `error`. The answer is saved even if the client leaves,
-        and repeating a request_id replays the saved outcome.
+        then `answer` and `done`, or `error`. The answer is saved even if the client leaves.
         """
         ids = {"conversation_id": started.conversation_id, "turn_id": started.turn_id}
         yield ServerSentEvent(event="turn", data=ids)
-        if started.replayed:
-            if started.replay is None:
-                yield ServerSentEvent(event="error", data={"message": _FAILED})
-                return
-            yield ServerSentEvent(event="answer", data=started.replay)
-            yield ServerSentEvent(event="done", data={})
-            return
         yield ServerSentEvent(event="status", data={"stage": "understanding"})
         events: asyncio.Queue[ServerSentEvent | None] = asyncio.Queue()
         clients.spawn(write_answer(started, events))

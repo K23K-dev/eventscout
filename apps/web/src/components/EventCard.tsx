@@ -129,9 +129,6 @@ export function EventTile({
         <div className="mt-auto pt-2">
           <Venue event={event} />
         </div>
-        {event.is_stale && (
-          <p className="mt-1 text-xs text-amber-400">Details may be out of date</p>
-        )}
       </div>
     </article>
   )

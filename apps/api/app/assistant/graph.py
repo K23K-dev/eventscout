@@ -50,8 +50,6 @@ Reply in 2-4 friendly sentences that answer the person's message:
   be broader than the current search, never a restatement, and must not widen the dates,
   price, place, or format.
 - If candidates came from a broader search, say there was no exact match first.
-- When message_points_at lists candidate numbers, the message is about those candidates:
-  "the second one" means candidate 2. Answer about them.
 """
 
 
@@ -65,12 +63,9 @@ class Turn(TypedDict, total=False):
     message: str
     today: date
     previous: SearchState | None
-    shown: list[EventResponse]
     intent: SearchIntent
     search: SearchState | None
     evidence: list[EventResponse]
-    points_at: list[int]
-    searched: bool
     broader: str | None
     draft: Draft | None
     attempts: int
@@ -96,53 +91,17 @@ class TurnResult:
     cards: list[EventResponse]
     clarification: str | None
     search: SearchState | None
-    searched: bool
     broader: str | None
     note: str | None
 
 
 def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn]:
     async def parse(state: Turn) -> Turn:
-        shown = state.get("shown", [])
-        try:
-            intent = await parse_intent(
-                services.openai,
-                services.model,
-                state["message"],
-                state.get("previous"),
-                shown,
-                state["today"],
-            )
-        except (OpenAIError, TimeoutError, ValueError) as exc:
-            logger.warning("Intent parsing failed (%s); searching the message", type(exc).__name__)
-            intent = SearchIntent.model_validate(
-                {
-                    "query": state["message"],
-                    "keywords": [state["message"]],
-                    "dates": {"kind": "unchanged", "days": None, "start": None, "end": None},
-                    "region": "unchanged",
-                    "price": "unchanged",
-                    "location_kind": "unchanged",
-                    "venue": None,
-                    "refers_to": [],
-                    "clarification": None,
-                }
-            )
-        points_at = [n for n in intent.refers_to if 0 < n <= len(shown)]
-        if intent.refers_to and not points_at and not intent.clarification:
-            intent = intent.model_copy(
-                update={"clarification": "Which event do you mean? I haven't shown that one."}
-            )
+        intent = await parse_intent(
+            services.openai, services.model, state["message"], state.get("previous"), state["today"]
+        )
         if intent.clarification:
             return {"intent": intent, "clarification": intent.clarification}
-        if points_at and not intent.changes_search:
-            # Keep the shown numbering, so "the second one" is candidate 2.
-            return {
-                "intent": intent,
-                "evidence": shown,
-                "points_at": points_at,
-                "search": state.get("previous"),
-            }
         return {"intent": intent, "search": state.get("previous")}
 
     async def retrieve(state: Turn) -> Turn:
@@ -163,7 +122,7 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
                 keywords=broader or search.keyword_query(),
                 limit=CANDIDATES,
             )
-        return {"search": search, "evidence": evidence, "searched": True}
+        return {"search": search, "evidence": evidence}
 
     async def explain(state: Turn) -> Turn:
         attempts = state.get("attempts", 0) + 1
@@ -177,7 +136,6 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
                 state["today"],
                 broader=state.get("broader"),
                 problem=state.get("problem"),
-                points_at=state.get("points_at", []),
             )
         except (OpenAIError, TimeoutError, ValueError) as exc:
             logger.warning("Answer drafting failed (%s)", type(exc).__name__)
@@ -222,11 +180,7 @@ def build_graph(services: Services) -> CompiledStateGraph[Turn, None, Turn, Turn
         return {"reply": reply, "cards": [evidence[n - 1] for n in order], "problem": None}
 
     def after_parse(state: Turn) -> str:
-        if state.get("clarification"):
-            return END
-        if state.get("points_at"):
-            return "explain"
-        return "retrieve"
+        return END if state.get("clarification") else "retrieve"
 
     def after_validate(state: Turn) -> str:
         if state.get("problem"):
@@ -253,13 +207,9 @@ async def run_turn(
     message: str,
     today: date,
     previous: SearchState | None,
-    shown: list[EventResponse],
 ) -> AsyncIterator[tuple[str, Turn]]:
-    """Yield each step's name with the turn so far, so callers can report progress.
-
-    `shown` numbers the events a follow-up like "the second one" can mean.
-    """
-    turn: Turn = {"message": message, "today": today, "previous": previous, "shown": shown}
+    """Yield each step's name with the turn so far, so callers can report progress."""
+    turn: Turn = {"message": message, "today": today, "previous": previous}
     async for update in graph.astream(turn, stream_mode="updates"):
         for node, changes in update.items():
             turn.update(cast(Turn, changes))
@@ -272,7 +222,6 @@ def turn_result(turn: Turn, previous: SearchState | None) -> TurnResult:
         cards=turn.get("cards", []),
         clarification=turn.get("clarification"),
         search=turn.get("search", previous),
-        searched=turn.get("searched", False),
         broader=turn.get("broader"),
         note=turn.get("note"),
     )
@@ -288,13 +237,11 @@ async def draft_reply(
     *,
     broader: str | None = None,
     problem: str | None = None,
-    points_at: list[int] | None = None,
 ) -> Draft:
     """Ask the model to explain the candidates; facts come only from the listings."""
     context: dict[str, Any] = {
         "search": _describe_search(search),
         "broader_search": broader,
-        "message_points_at": points_at or None,
         "candidates": [_evidence(n, event) for n, event in enumerate(evidence, start=1)],
     }
     if problem:

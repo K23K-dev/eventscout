@@ -28,7 +28,7 @@ import { Toggle } from '@/components/ui/toggle'
 import { calendarDate, dateRange, dateWindow, dayHeading, span } from '@/utils/format'
 import { topics } from '@/utils/topics'
 
-const filterKeys = ['q', 'date_from', 'date_to', 'region', 'price_status', 'topic', 'sort', 'page']
+const filterKeys = ['q', 'date_from', 'date_to', 'region', 'price_status', 'topic', 'page']
 const grid = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
 
 interface Day {
@@ -76,9 +76,8 @@ export function Discover() {
   })
   const { start, end } = dateWindow(params)
   const currentSearch = searchParams.toString() ? `?${searchParams}` : ''
-  const hasFilters = filterKeys.some(key => !['sort', 'page'].includes(key) && params.has(key))
+  const hasFilters = filterKeys.some(key => key !== 'page' && params.has(key))
   const keywords = params.get('q') || ''
-  const sort = params.get('sort') || 'relevance'
   const free = params.get('price_status') === 'free'
   const campus = params.get('region') === 'gt'
   const topic = params.get('topic')
@@ -206,15 +205,6 @@ export function Discover() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={sort} onValueChange={value => apply({ sort: value })}>
-          <SelectTrigger size="sm" className="ml-auto w-32" aria-label="Sort events">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end">
-            <SelectItem value="relevance">{keywords ? 'Best match' : 'Soonest'}</SelectItem>
-            <SelectItem value="start_time">By date</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       <section className="mt-8" aria-labelledby="results-heading" aria-busy={query.isFetching}>
@@ -294,7 +284,7 @@ export function Discover() {
           </Notice>
         ) : (
           <>
-            {keywords && sort === 'relevance' ? (
+            {keywords ? (
               <div className={cn(grid, 'mt-6')}>
                 {query.data.items.map(event => (
                   <EventTile key={event.id} event={event} backTo={`/${currentSearch}`} showDate />

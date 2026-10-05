@@ -31,8 +31,6 @@ export interface Event {
   registration_url: string | null
   status: 'scheduled' | 'cancelled'
   content_version: number
-  last_verified_at: string | null
-  is_stale: boolean
   sources: EventSource[]
   summary: string | null
   topics: string[]
@@ -174,7 +172,7 @@ export async function deleteConversation(id: string): Promise<void> {
 
 /** Send a chat message and report each Server-Sent Event as it arrives. EventSource can't POST. */
 export async function askEvents(
-  body: { message: string; request_id: string; conversation_id?: string },
+  body: { message: string; conversation_id?: string },
   onEvent: (event: TurnEvent) => void,
 ): Promise<void> {
   const auth = await signedIn()

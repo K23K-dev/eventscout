@@ -10,8 +10,7 @@ from app.events.models import CATALOG_TIMEZONE, EventFilters, EventPage, EventRe
 from app.storage.models import EventContent
 
 _PUBLIC_COLUMNS = sql.SQL(", ").join(
-    sql.Identifier("e", name)
-    for name in ("id", "content_version", "last_verified_at", *EventContent.model_fields)
+    sql.Identifier("e", name) for name in ("id", "content_version", *EventContent.model_fields)
 )
 # The calendars listing each event, and its AI summary and topics.
 _SOURCE_DETAILS = sql.SQL("""
@@ -62,21 +61,16 @@ class EventRepository:
                     "ts_rank_cd(e.search_document, "
                     "websearch_to_tsquery('pg_catalog.english', %(q)s), 32) DESC, "
                 )
-                if filters.q and filters.sort == "relevance"
+                if filters.q
                 else sql.SQL("")
             )
             # Soonest first means what starts in the window, then what was already running
             # (months-long exhibitions would otherwise fill the first pages).
-            running_last = (
-                sql.SQL("({} < %(window_start)s) ASC, ").format(_START_TIME)
-                if filters.sort == "relevance"
-                else sql.SQL("")
-            )
             cursor = await self._connection.execute(
                 sql.SQL("""
                     SELECT {}, {}
                     FROM eventscout.event_occurrences e {}
-                    WHERE {} ORDER BY {} {} {} ASC, e.id ASC
+                    WHERE {} ORDER BY {} ({} < %(window_start)s) ASC, {} ASC, e.id ASC
                     LIMIT %(limit)s OFFSET %(offset)s
                 """).format(
                     _PUBLIC_COLUMNS,
@@ -84,7 +78,7 @@ class EventRepository:
                     _SOURCE_DETAILS,
                     where,
                     rank,
-                    running_last,
+                    _START_TIME,
                     _START_TIME,
                 ),
                 {**parameters, "limit": filters.page_size, "offset": offset},

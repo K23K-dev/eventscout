@@ -7,17 +7,16 @@ from typing import Any, Literal
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from app.events.models import EventFilters, EventResponse
+from app.events.models import EventFilters
 
 MAX_WINDOW_DAYS = 90
 INSTRUCTIONS = """\
 You turn messages about finding events around Georgia Tech and Atlanta into search changes.
 Today is {today} in America/New_York.
 
-A developer message gives, as data, the current search from earlier turns and the events shown
-last turn. Describe only what the new message changes: use "unchanged" or null for anything it
-does not mention, so earlier constraints carry over. Never add a constraint the person did not
-state.
+A developer message gives, as data, the current search from earlier turns. Describe only what
+the new message changes: use "unchanged" or null for anything it does not mention, so earlier
+constraints carry over. Never add a constraint the person did not state.
 
 - query: a short standalone description of what to look for, written for semantic search, such
   as "live jazz performances". Mention who it is for when they say so. Null when the message
@@ -31,9 +30,8 @@ state.
 - price: "free" only when they ask for free events; "any" when they drop that limit.
 - location_kind: "online" or "in_person" only when they say so; "any" when they drop it.
 - venue: a venue they name; "" to drop an earlier venue; null otherwise.
-- refers_to: 1-based positions of shown events the message points at, like "the second one".
 - clarification: a short question only when the message cannot become a search, such as a
-  greeting or a reference when no events were shown. Otherwise null.
+  greeting. Otherwise null.
 """
 
 
@@ -66,18 +64,7 @@ class SearchIntent(BaseModel):
     price: Literal["unchanged", "any", "free"]
     location_kind: Literal["unchanged", "any", "in_person", "online"]
     venue: str | None = Field(description="Venue named in this message; empty to drop one")
-    refers_to: list[int] = Field(description="1-based positions of shown events referred to")
     clarification: str | None = Field(description="Question to ask when no search is possible")
-
-    @property
-    def changes_search(self) -> bool:
-        return not (
-            self.query is None
-            and self.keywords is None
-            and self.dates.kind == "unchanged"
-            and self.region == self.price == self.location_kind == "unchanged"
-            and self.venue is None
-        )
 
 
 class SearchState(BaseModel):
@@ -113,17 +100,10 @@ async def parse_intent(
     model: str,
     message: str,
     state: SearchState | None,
-    shown: list[EventResponse],
     today: date,
 ) -> SearchIntent:
-    """Ask the model what the message changes; earlier results are data, not instructions."""
-    context = {
-        "current_search": state.model_dump(mode="json") if state else None,
-        "shown_events": [
-            f"{position}. {event.title} ({event.first_day or 'date unknown'})"
-            for position, event in enumerate(shown, start=1)
-        ],
-    }
+    """Ask the model what the message changes; the earlier search is data, not instructions."""
+    context = {"current_search": state.model_dump(mode="json") if state else None}
     response = await openai.responses.parse(
         model=model,
         instructions=INSTRUCTIONS.format(today=f"{today:%A, %B} {today.day}, {today.year}"),

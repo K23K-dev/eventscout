@@ -43,41 +43,26 @@ def main() -> int:
         help="import one calendar; repeat to select several (default: all calendars)",
     )
     parser.add_argument(
-        "--days", type=int, default=90, help="rolling window, 1–90 days (default: 90)"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="preview the import without a database connection"
-    )
-    parser.add_argument(
         "--reindex", action="store_true", help="re-embed every event, not only new or changed ones"
     )
     args = parser.parse_args()
-    if not 1 <= args.days <= 90:
-        parser.error("--days must be between 1 and 90")
     settings = Settings()
-    if not args.dry_run and settings.missing("database_url"):
-        parser.error("set EVENTSCOUT_DATABASE_URL in apps/api/.env, or use --dry-run")
+    if settings.missing("database_url"):
+        parser.error("set EVENTSCOUT_DATABASE_URL in apps/api/.env")
     # Without these keys the import still runs; summaries and the search index wait (and fail).
     ai_keys = settings.missing("openai_api_key", "pinecone_api_key")
-    if ai_keys and not args.dry_run:
+    if ai_keys:
         print(f"Skipping enrichment and indexing: set {', '.join(ai_keys)}.", file=sys.stderr)
-    paid = not args.dry_run and not ai_keys
     # Psycopg's async connections require a selector loop on Windows.
     loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
     try:
         with asyncio.Runner(loop_factory=loop_factory) as runner:
-            imported = _run(
-                runner,
-                "Import",
-                run_import(
-                    settings, days=args.days, dry_run=args.dry_run, source_names=args.source
-                ),
-            )
-            enriched = _run(runner, "Enrichment", run_enrichment(settings)) if paid else None
+            imported = _run(runner, "Import", run_import(settings, source_names=args.source))
+            enriched = None if ai_keys else _run(runner, "Enrichment", run_enrichment(settings))
             indexed = (
-                _run(runner, "Indexing", run_indexing(settings, reindex=args.reindex))
-                if paid
-                else None
+                None
+                if ai_keys
+                else _run(runner, "Indexing", run_indexing(settings, reindex=args.reindex))
             )
     except KeyboardInterrupt:
         print("Interrupted. Rerun the command to resume safely.", file=sys.stderr)
@@ -88,7 +73,7 @@ def main() -> int:
     failed = (
         imported is None
         or imported.failed
-        or (not args.dry_run and any(not result or result.errors for result in (enriched, indexed)))
+        or any(not result or result.errors for result in (enriched, indexed))
     )
     return 1 if failed else 0
 

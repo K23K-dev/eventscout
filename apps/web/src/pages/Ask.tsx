@@ -1,11 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, LoaderCircle, MessageCircle, PanelLeft, Plus, Trash2 } from 'lucide-react'
+import { ArrowUp, LoaderCircle, PanelLeft, Plus, Trash2 } from 'lucide-react'
 import { createElement, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { cn } from '@/utils/cn'
 import {
-  ApiError,
   askEvents,
   deleteConversation,
   fetchConversation,
@@ -44,7 +43,7 @@ const suggestions: [string, string][] = [
 ]
 
 interface Pending {
-  requestId: string
+  id: string
   message: string
   conversationId?: string
   turnId?: string
@@ -53,7 +52,6 @@ interface Pending {
   results: Event[]
   answer?: AnswerData
   error?: string
-  resend?: boolean
 }
 
 export function Ask() {
@@ -61,8 +59,8 @@ export function Ask() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const session = useSession()
-  // Each account's chats are cached apart; undefined until a saved sign-in is restored.
-  const account = session === undefined ? undefined : (session?.user.id ?? 'guest')
+  // Each account's chats are cached apart; undefined for guests and while sign-in restores.
+  const account = session?.user.id
   const [draft, setDraft] = useState('')
   const [pending, setPending] = useState<Pending | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -72,12 +70,12 @@ export function Ask() {
   const conversations = useQuery({
     queryKey: ['conversations', account],
     queryFn: ({ signal }) => fetchConversations(signal),
-    enabled: account !== undefined,
+    enabled: !!account,
   })
   const conversation = useQuery({
     queryKey: ['conversation', account, conversationId],
     queryFn: ({ signal }) => fetchConversation(conversationId!, signal),
-    enabled: account !== undefined && !!conversationId,
+    enabled: !!account && !!conversationId,
     // After a refresh mid-answer the server keeps writing; check back until it's saved.
     refetchInterval: query =>
       !streaming && query.state.data?.turns.some(turn => turn.status === 'running') ? 2000 : false,
@@ -88,32 +86,25 @@ export function Ask() {
   )
   const empty = !turns.length && !shown
   const backTo = conversationId ? `/ask/${conversationId}` : '/ask'
-  const pendingRequest = pending?.requestId
+  const pendingId = pending?.id
   const pendingError = pending?.error
 
   useEffect(() => {
-    if (pendingRequest) endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [pendingRequest, pendingError])
+    if (pendingId) endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  }, [pendingId, pendingError])
 
-  async function send(message: string, requestId: string = crypto.randomUUID()) {
+  async function send(message: string) {
     const text = message.trim()
     if (!text || streaming) return
     setDraft('')
     const target = conversationId
-    setPending({
-      requestId,
-      message: text,
-      conversationId: target,
-      stage: 'understanding',
-      results: [],
-    })
+    const id = crypto.randomUUID()
+    setPending({ id, message: text, conversationId: target, stage: 'understanding', results: [] })
     const update = (changes: Partial<Pending>) =>
-      setPending(current =>
-        current?.requestId === requestId ? { ...current, ...changes } : current,
-      )
+      setPending(current => (current?.id === id ? { ...current, ...changes } : current))
     let saved = target
     try {
-      await askEvents({ message: text, request_id: requestId, conversation_id: target }, event => {
+      await askEvents({ message: text, conversation_id: target }, event => {
         switch (event.type) {
           case 'turn':
             saved = event.conversation_id
@@ -142,18 +133,14 @@ export function Ask() {
         }
       })
     } catch (error) {
-      // A request ID never gets two answers, so a retry after a dropped connection or a busy
-      // conversation reuses it and picks up any answer the server was already writing.
-      const resend = error instanceof ApiError && (error.status === 0 || error.status === 409)
       update({
         error: error instanceof Error ? error.message : 'Something went wrong. Please try again.',
-        resend,
       })
       return
     }
     await queryClient.invalidateQueries({ queryKey: ['conversations'] })
     if (saved) await queryClient.invalidateQueries({ queryKey: ['conversation', account, saved] })
-    setPending(current => (current?.requestId === requestId && !current.error ? null : current))
+    setPending(current => (current?.id === id && !current.error ? null : current))
   }
 
   async function remove(id: string) {
@@ -175,37 +162,22 @@ export function Ask() {
     void send(draft)
   }
 
-  // Guests sign in first, unless the API lets them chat (local scripts only).
-  const guestRefused =
-    conversations.isPending ||
-    (conversations.error instanceof ApiError && conversations.error.status === 401)
-  if (session === null && guestRefused) {
+  // Chatting needs a Google sign-in; browsing stays open to everyone.
+  if (session === null) {
     return (
       <main
         id="main"
         tabIndex={-1}
-        className="flex flex-1 items-center justify-center py-16 focus:outline-none"
+        className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center focus:outline-none"
       >
         <title>Ask about events · EventScout</title>
-        <section
-          aria-labelledby="ask-heading"
-          className="w-full max-w-sm rounded-xl border bg-card p-6 text-center shadow-sm"
-        >
-          <div className="mx-auto flex size-10 items-center justify-center rounded-lg border bg-background">
-            <MessageCircle className="size-5" aria-hidden="true" />
-          </div>
-          <h1 id="ask-heading" className="mt-4 text-xl font-semibold tracking-tight">
-            Ask about events
-          </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Describe what you’re in the mood for and get picks from real listings, each linked to
-            its event.
-          </p>
-          <Button variant="outline" className="mt-6 w-full" onClick={() => void signIn()}>
-            <GoogleMark /> Continue with Google
-          </Button>
-          <p className="mt-3 text-xs text-muted-foreground">Browsing stays open to everyone.</p>
-        </section>
+        <h1 className="text-xl font-semibold tracking-tight">Ask about events</h1>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          Sign in with Google to get picks from real listings, each linked to its event.
+        </p>
+        <Button className="mt-2" onClick={() => void signIn()}>
+          Sign in with Google
+        </Button>
       </main>
     )
   }
@@ -401,11 +373,7 @@ export function Ask() {
                 <Message text={shown.message} />
                 <Reply>
                   {shown.answer ? (
-                    <Answer
-                      id={shown.turnId ?? shown.requestId}
-                      answer={shown.answer}
-                      backTo={backTo}
-                    />
+                    <Answer id={shown.turnId ?? shown.id} answer={shown.answer} backTo={backTo} />
                   ) : shown.error ? (
                     <div
                       role="alert"
@@ -414,9 +382,7 @@ export function Ask() {
                       {shown.error}
                       <button
                         type="button"
-                        onClick={() =>
-                          void send(shown.message, shown.resend ? shown.requestId : undefined)
-                        }
+                        onClick={() => void send(shown.message)}
                         className="cursor-pointer font-medium text-red-200 underline underline-offset-4"
                       >
                         Try again
@@ -515,28 +481,5 @@ function Status({ text }: { text: string }) {
     <p role="status" className="flex h-6 items-center gap-2 text-sm text-muted-foreground">
       <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> {text}
     </p>
-  )
-}
-
-function GoogleMark() {
-  return (
-    <svg viewBox="0 0 48 48" aria-hidden="true">
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-      />
-    </svg>
   )
 }
