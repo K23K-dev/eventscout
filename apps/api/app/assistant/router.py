@@ -29,7 +29,7 @@ from app.assistant.models import (
 from app.assistant.store import ConversationStore, TurnInProgress
 from app.auth import InvalidToken, KeysUnavailable, TokenVerifier
 from app.database import connect_database
-from app.events.models import CATALOG_TIMEZONE, ErrorResponse, EventResponse
+from app.events.models import CATALOG_TIMEZONE, EventResponse
 from app.events.repository import EventRepository
 from app.settings import Settings
 
@@ -96,18 +96,9 @@ class StartedTurn:
 
 
 def create_assistant_router(settings: Settings, clients: AssistantClients) -> APIRouter:
-    router = APIRouter(
-        prefix="/api",
-        tags=["assistant"],
-        responses={
-            401: {"model": ErrorResponse, "description": "Sign-in required"},
-            503: {"model": ErrorResponse, "description": "Temporarily unavailable"},
-        },
-    )
-
-    bearer = HTTPBearer(
-        auto_error=False, description="A Supabase access token from Google sign-in."
-    )
+    router = APIRouter(prefix="/api")
+    # A Supabase access token from Google sign-in.
+    bearer = HTTPBearer(auto_error=False)
     verifier = TokenVerifier(settings.supabase_url) if settings.supabase_url else None
 
     async def current_owner(
@@ -267,15 +258,7 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
         finally:
             events.put_nowait(None)
 
-    @router.post(
-        "/turns",
-        response_class=EventSourceResponse,
-        operation_id="askEvents",
-        responses={
-            404: {"model": ErrorResponse, "description": "Conversation not found"},
-            409: {"model": ErrorResponse, "description": "An answer is still being written"},
-        },
-    )
+    @router.post("/turns", response_class=EventSourceResponse)
     async def ask(
         started: Annotated[StartedTurn, Depends(start_turn)],
     ) -> AsyncIterable[ServerSentEvent]:
@@ -301,20 +284,13 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
         while (event := await events.get()) is not None:
             yield event
 
-    @router.get(
-        "/conversations", response_model=list[ConversationSummary], operation_id="listConversations"
-    )
+    @router.get("/conversations")
     async def list_conversations(owner: Owner, connection: Connection) -> list[ConversationSummary]:
         """The owner's 50 most recently active conversations."""
         rows = await ConversationStore(connection, owner).conversations()
         return [ConversationSummary.model_validate(row) for row in rows]
 
-    @router.get(
-        "/conversations/{conversation_id}",
-        response_model=ConversationDetail,
-        operation_id="getConversation",
-        responses={404: {"model": ErrorResponse, "description": "Conversation not found"}},
-    )
+    @router.get("/conversations/{conversation_id}")
     async def get_conversation(
         conversation_id: UUID, owner: Owner, connection: Connection
     ) -> ConversationDetail:
@@ -342,12 +318,7 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
         ]
         return ConversationDetail.model_validate({**conversation, "turns": turns})
 
-    @router.delete(
-        "/conversations/{conversation_id}",
-        status_code=204,
-        operation_id="deleteConversation",
-        responses={404: {"model": ErrorResponse, "description": "Conversation not found"}},
-    )
+    @router.delete("/conversations/{conversation_id}", status_code=204)
     async def delete_conversation(
         conversation_id: UUID, owner: Owner, connection: Connection
     ) -> None:

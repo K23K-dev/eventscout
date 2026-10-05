@@ -178,14 +178,3 @@ export function googleCalendarUrl(event: Event) {
     .join('\n\n')
   return `https://calendar.google.com/calendar/render?${new URLSearchParams({ action: 'TEMPLATE', text: event.title, dates: dates.join('/'), details, location: event.venue ?? '', ctz: timezone })}`
 }
-
-export function checkedAt(value: string) {
-  return formatDate(value, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  })
-}

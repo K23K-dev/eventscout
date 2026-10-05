@@ -104,9 +104,7 @@ async def requeue(
     return cursor.rowcount
 
 
-async def run_indexing(
-    settings: Settings, *, limit: int | None = None, reindex: bool = False
-) -> IndexReport:
+async def run_indexing(settings: Settings, *, reindex: bool = False) -> IndexReport:
     """Create the index on first use, then embed, remove, or skip queued events.
 
     With reindex, every event's current version is queued again first, to apply a change
@@ -130,16 +128,13 @@ async def run_indexing(
             )
         requeued = await requeue(connection) if reindex else 0
         async with await pinecone.index(settings.pinecone_index) as index:
-            report = await _drain(connection, openai, index, limit)
+            report = await _drain(connection, openai, index)
             report.requeued = requeued
             return report
 
 
 async def _drain(
-    connection: AsyncConnection[dict[str, Any]],
-    openai: AsyncOpenAI,
-    index: AsyncIndex,
-    limit: int | None,
+    connection: AsyncConnection[dict[str, Any]], openai: AsyncOpenAI, index: AsyncIndex
 ) -> IndexReport:
     report = IndexReport()
     # A crashed run leaves its claimed batch in processing; return it after a grace period.
@@ -147,8 +142,7 @@ async def _drain(
         """UPDATE eventscout.index_jobs SET status = 'pending', locked_at = NULL
            WHERE status = 'processing' AND locked_at < clock_timestamp() - interval '15 minutes'"""
     )
-    while limit is None or report.claimed < limit:
-        size = _BATCH_SIZE if limit is None else min(_BATCH_SIZE, limit - report.claimed)
+    while True:
         cursor = await connection.execute(
             """UPDATE eventscout.index_jobs SET status = 'processing', locked_at = clock_timestamp()
                WHERE id IN (
@@ -157,7 +151,7 @@ async def _drain(
                    ORDER BY available_at, created_at LIMIT %s FOR UPDATE SKIP LOCKED
                )
                RETURNING id, event_id, content_version, operation""",
-            (size,),
+            (_BATCH_SIZE,),
         )
         jobs = await cursor.fetchall()
         if not jobs:

@@ -20,7 +20,6 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   calendarDate,
-  checkedAt,
   eventDate,
   formatDate,
   googleCalendarUrl,
@@ -300,28 +299,20 @@ function EventInformation({ event }: { event: Event }) {
           </section>
 
           <p className="mt-8 border-t pt-4 text-xs text-muted-foreground">
-            {event.sources.length > 0 && (
-              <>
-                Listed by{' '}
-                {event.sources.map((source, index) => (
-                  <span key={source.slug}>
-                    {index > 0 && ', '}
-                    <a
-                      className="text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
-                      href={source.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {source.name}
-                    </a>
-                  </span>
-                ))}
-                {' · '}
-              </>
-            )}
-            {event.last_verified_at
-              ? `Details checked ${checkedAt(event.last_verified_at)}`
-              : 'These details haven’t been verified yet.'}
+            Listed by{' '}
+            {event.sources.map((source, index) => (
+              <span key={source.slug}>
+                {index > 0 && ', '}
+                <a
+                  className="text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
+                  href={source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {source.name}
+                </a>
+              </span>
+            ))}
           </p>
         </div>
       </div>

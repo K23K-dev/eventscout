@@ -73,10 +73,9 @@ export function PageShell({ children }: { children: ReactNode }) {
       <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 sm:px-6">{children}</div>
       {!pathname.startsWith('/ask') && (
         <footer className="border-t">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:px-6">
-            <span>Built around campus. Open to the city.</span>
-            <span>Times shown in Atlanta (Eastern).</span>
-          </div>
+          <p className="mx-auto max-w-7xl px-4 py-6 text-xs text-muted-foreground sm:px-6">
+            Built around campus. Open to the city.
+          </p>
         </footer>
       )}
     </div>

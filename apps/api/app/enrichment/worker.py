@@ -51,7 +51,7 @@ class EnrichReport:
     errors: list[str] = field(default_factory=list)
 
 
-async def run_enrichment(settings: Settings, *, limit: int) -> EnrichReport:
+async def run_enrichment(settings: Settings, *, limit: int = 500) -> EnrichReport:
     """Enrich up to `limit` listed events whose current content has no enrichment, soonest first.
 
     A provider error stops the run after the current chunk; the next run picks up the rest.

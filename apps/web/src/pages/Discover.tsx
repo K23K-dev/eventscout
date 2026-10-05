@@ -14,7 +14,6 @@ import { cn } from '@/lib/utils'
 import { fetchEvents, type Event } from '@/lib/api'
 import { DateRangePicker } from '@/components/DateRangePicker'
 import { EventTile } from '@/components/EventCard'
-import { Filters } from '@/components/Filters'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -29,18 +28,7 @@ import { Toggle } from '@/components/ui/toggle'
 import { calendarDate, dateRange, dateWindow, dayHeading, span } from '@/lib/events'
 import { topics } from '@/lib/topics'
 
-const filterKeys = [
-  'q',
-  'date_from',
-  'date_to',
-  'region',
-  'price_status',
-  'location_kind',
-  'venue',
-  'topic',
-  'sort',
-  'page',
-]
+const filterKeys = ['q', 'date_from', 'date_to', 'region', 'price_status', 'topic', 'sort', 'page']
 const grid = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
 
 interface Day {
@@ -218,7 +206,6 @@ export function Discover() {
             ))}
           </SelectContent>
         </Select>
-        <Filters key={params.toString()} params={params} apply={apply} />
         <Select value={sort} onValueChange={value => apply({ sort: value })}>
           <SelectTrigger size="sm" className="ml-auto w-32" aria-label="Sort events">
             <SelectValue />

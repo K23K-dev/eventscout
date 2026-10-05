@@ -31,19 +31,9 @@ jobs:
           version: '0.8.17'
           enable-cache: true
           cache-dependency-glob: apps/api/uv.lock
-      - name: Import events
+      # Imports, then summarizes and indexes; a failed stage doesn't stop the next one.
+      - name: Refresh events
         run: uv run --locked --no-dev python -m app.ingestion | tee report.json
-        env:
-          EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
-      - name: Enrich events
-        if: ${{ !cancelled() }}
-        run: uv run --locked --no-dev python -m app.enrichment | tee enrich.json
-        env:
-          EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
-          EVENTSCOUT_OPENAI_API_KEY: ${{ secrets.EVENTSCOUT_OPENAI_API_KEY }}
-      - name: Index events
-        if: ${{ !cancelled() }}
-        run: uv run --locked --no-dev python -m app.indexing | tee index.json
         env:
           EVENTSCOUT_DATABASE_URL: ${{ secrets.EVENTSCOUT_DATABASE_URL }}
           EVENTSCOUT_OPENAI_API_KEY: ${{ secrets.EVENTSCOUT_OPENAI_API_KEY }}
@@ -53,20 +43,16 @@ jobs:
         run: |
           {
             if [ -s report.json ]; then
-              jq -r '"**\(.unique_events) upcoming events** from \([.sources[] | select(.records_seen > 0)] | length) calendars"' report.json
+              jq -r '.import | if . then "**\(.unique_events) upcoming events** from \([.sources[] | select(.records_seen > 0)] | length) calendars" else "**Import:** did not run, see the log" end' report.json
               echo
               echo '| Source | Seen | Created | Updated | Unchanged | Issues |'
               echo '| --- | ---: | ---: | ---: | ---: | ---: |'
-              jq -r '.sources[] | "| \(.source) | \(.records_seen) | \(.created) | \(.updated) | \(.unchanged) | \(.issues | length) |"' report.json
+              jq -r '.import.sources[]? | "| \(.source) | \(.records_seen) | \(.created) | \(.updated) | \(.unchanged) | \(.issues | length) |"' report.json
               echo
-              jq -r '.sources[] | select(.records_seen == 0) | "- **\(.source)** returned no records: \(.issues[0] // "no issue reported")"' report.json
-            fi
-            if [ -s enrich.json ]; then
+              jq -r '.import.sources[]? | select(.records_seen == 0) | "- **\(.source)** returned no records: \(.issues[0] // "no issue reported")"' report.json
               echo
-              jq -r '"**Enrichment:** \(.enriched) new summaries, \(.rejected) rejected, \(.errors | length) errors"' enrich.json
-            fi
-            if [ -s index.json ]; then
+              jq -r '.enrichment | "**Enrichment:** " + if . then "\(.enriched) new summaries, \(.rejected) rejected, \(.errors | length) errors" else "did not run, see the log" end' report.json
               echo
-              jq -r '"**Search index:** \(.embedded) embedded, \(.removed + .expired + .pruned) removed, \(.errors | length) errors"' index.json
+              jq -r '.index | "**Search index:** " + if . then "\(.embedded) embedded, \(.removed + .expired + .pruned) removed, \(.errors | length) errors" else "did not run, see the log" end' report.json
             fi
           } >> "$GITHUB_STEP_SUMMARY"

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg import Error as DatabaseError
 
 from app.database import connect_database
-from app.events.models import ErrorResponse, EventFilters, EventPage, EventResponse
+from app.events.models import EventFilters, EventPage, EventResponse
 from app.events.repository import EventRepository
 from app.settings import Settings
 
@@ -18,11 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_events_router(settings: Settings) -> APIRouter:
-    router = APIRouter(
-        prefix="/api/events",
-        tags=["events"],
-        responses={503: {"model": ErrorResponse, "description": "Catalog temporarily unavailable"}},
-    )
+    router = APIRouter(prefix="/api/events")
 
     async def repository() -> AsyncGenerator[EventRepository]:
         if settings.database_url is None or not settings.database_url.get_secret_value().strip():
@@ -44,27 +40,15 @@ def create_events_router(settings: Settings) -> APIRouter:
                 status_code=503, detail="The event catalog is temporarily unavailable."
             ) from None
 
-    @router.get("", response_model=EventPage, operation_id="listEvents")
+    @router.get("")
     async def list_events(
         filters: Annotated[EventFilters, Query()],
         catalog: Annotated[EventRepository, Depends(repository)],
     ) -> EventPage:
-        """Search scheduled events overlapping an Atlanta calendar-date window.
-
-        The default is today through 30 days later (exclusive), including ongoing
-        events and earlier events on the first date. Unknown start times are omitted.
-        Blank search text browses by date; punctuation/stopword-only searches match
-        nothing. Page counts and results share a database snapshot per request.
-        Changes to the catalog between requests can shift offset-based pages.
-        """
+        """Search scheduled events overlapping an Atlanta calendar-date window."""
         return await catalog.search(filters)
 
-    @router.get(
-        "/{event_id}",
-        response_model=EventResponse,
-        operation_id="getEvent",
-        responses={404: {"model": ErrorResponse, "description": "Event not found"}},
-    )
+    @router.get("/{event_id}")
     async def get_event(
         event_id: UUID, catalog: Annotated[EventRepository, Depends(repository)]
     ) -> EventResponse:

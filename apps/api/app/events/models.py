@@ -138,7 +138,3 @@ class EventPage(BaseModel):
     date_from: date
     date_to: date
     timezone: Literal["America/New_York"] = "America/New_York"
-
-
-class ErrorResponse(BaseModel):
-    detail: str

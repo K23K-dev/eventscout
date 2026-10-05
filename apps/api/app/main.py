@@ -28,7 +28,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Authorization", "Content-Type"],
     )
 
-    @application.get("/health", tags=["health"])
+    @application.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
