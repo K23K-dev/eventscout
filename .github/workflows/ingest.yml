@@ -45,14 +45,14 @@ jobs:
             if [ -s report.json ]; then
               jq -r '.import | if . then "**\(.unique_events) upcoming events** from \([.sources[] | select(.records_seen > 0)] | length) calendars" else "**Import:** did not run, see the log" end' report.json
               echo
-              echo '| Source | Seen | Created | Updated | Unchanged | Issues |'
-              echo '| --- | ---: | ---: | ---: | ---: | ---: |'
-              jq -r '.import.sources[]? | "| \(.source) | \(.records_seen) | \(.created) | \(.updated) | \(.unchanged) | \(.issues | length) |"' report.json
+              echo '| Source | Seen | Issues |'
+              echo '| --- | ---: | ---: |'
+              jq -r '.import.sources[]? | "| \(.source) | \(.records_seen) | \(.issues | length) |"' report.json
               echo
               jq -r '.import.sources[]? | select(.records_seen == 0) | "- **\(.source)** returned no records: \(.issues[0] // "no issue reported")"' report.json
               echo
               jq -r '.enrichment | "**Enrichment:** " + if . then "\(.enriched) new summaries, \(.rejected) rejected, \(.errors | length) errors" else "did not run, see the log" end' report.json
               echo
-              jq -r '.index | "**Search index:** " + if . then "\(.embedded) embedded, \(.removed + .expired + .pruned) removed, \(.errors | length) errors" else "did not run, see the log" end' report.json
+              jq -r '.index | "**Search index:** " + if . then "\(.embedded) embedded, \(.removed) removed, \(.errors | length) errors" else "did not run, see the log" end' report.json
             fi
           } >> "$GITHUB_STEP_SUMMARY"

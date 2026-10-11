@@ -1,17 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import {
-  ArrowLeft,
-  ArrowRight,
-  CalendarX2,
-  Search,
-  WifiOff,
-  X,
-  type LucideIcon,
-} from 'lucide-react'
+import { ArrowLeft, ArrowRight, Search, X } from 'lucide-react'
 import { createElement, useRef, type FormEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { cn } from '@/utils/cn'
-import { fetchEvents, type Event } from '@/lib/api'
+import { fetchEvents } from '@/lib/api'
 import { DateRangePicker } from '@/components/DateRangePicker'
 import { EventTile } from '@/components/EventCard'
 import { Button } from '@/components/ui/button'
@@ -23,43 +15,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Toggle } from '@/components/ui/toggle'
-import { calendarDate, dateRange, dateWindow, dayHeading, span } from '@/utils/format'
+import { dateRange, dateWindow } from '@/utils/format'
 import { topics } from '@/utils/topics'
 
 const filterKeys = ['q', 'date_from', 'date_to', 'region', 'price_status', 'topic', 'page']
-const grid = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
-
-interface Day {
-  key: string
-  title: string
-  date?: string
-  events: Event[]
-}
-
-/** Consecutive events under one heading per day; anything that began before the window is "Ongoing". */
-function byDay(events: Event[], windowStart: string): Day[] {
-  const days: Day[] = []
-  for (const event of events) {
-    const { start } = span(event)
-    const date = start ? calendarDate(start) : null
-    const key = !date ? 'tba' : date < windowStart ? 'ongoing' : date
-    let day = days.at(-1)
-    if (day?.key !== key) {
-      const heading =
-        key === 'ongoing'
-          ? { title: 'Ongoing', date: 'Exhibitions and multi-day events' }
-          : key === 'tba'
-            ? { title: 'Date to be announced' }
-            : dayHeading(key)
-      day = { key, ...heading, events: [] }
-      days.push(day)
-    }
-    day.events.push(event)
-  }
-  return days
-}
 
 export function Discover() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -231,42 +191,17 @@ export function Discover() {
         </div>
 
         {query.isPending ? (
-          <div className={cn(grid, 'mt-6')} role="status" aria-label="Loading events">
-            {Array.from({ length: 8 }, (_, index) => (
-              <div
-                key={index}
-                className="overflow-hidden rounded-lg border bg-card"
-                aria-hidden="true"
-              >
-                <Skeleton className="aspect-video w-full rounded-none" />
-                <div className="space-y-2 p-3.5">
-                  <Skeleton className="h-3.5 w-16" />
-                  <Skeleton className="h-4 w-4/5" />
-                  <Skeleton className="h-3.5 w-1/2" />
-                </div>
-              </div>
-            ))}
-          </div>
+          <p role="status" className="mt-6 text-sm text-muted-foreground">
+            Loading events…
+          </p>
         ) : query.isError ? (
-          <Notice
-            icon={WifiOff}
-            title="We couldn’t load these events."
-            text={query.error.message}
-            role="alert"
-          >
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void query.refetch()
-              }}
-            >
+          <Notice title="We couldn’t load these events." text={query.error.message} role="alert">
+            <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
               Try again
             </Button>
           </Notice>
         ) : query.data.items.length === 0 ? (
           <Notice
-            icon={CalendarX2}
             title={query.data.total > 0 ? 'No events on this page.' : 'No events found.'}
             text={
               query.data.total > 0
@@ -284,33 +219,11 @@ export function Discover() {
           </Notice>
         ) : (
           <>
-            {keywords ? (
-              <div className={cn(grid, 'mt-6')}>
-                {query.data.items.map(event => (
-                  <EventTile key={event.id} event={event} backTo={`/${currentSearch}`} showDate />
-                ))}
-              </div>
-            ) : (
-              <div className="mt-4 space-y-6">
-                {byDay(query.data.items, query.data.date_from).map((day, index) => (
-                  <section key={`${day.key}-${index}`} aria-labelledby={`day-${index}`}>
-                    <div className="sticky top-14 z-10 -mx-1 flex items-baseline gap-2 bg-background/90 px-1 py-2.5 backdrop-blur">
-                      <h3 id={`day-${index}`} className="text-sm font-semibold">
-                        {day.title}
-                      </h3>
-                      {day.date && (
-                        <span className="text-sm text-muted-foreground">{day.date}</span>
-                      )}
-                    </div>
-                    <div className={grid}>
-                      {day.events.map(event => (
-                        <EventTile key={event.id} event={event} backTo={`/${currentSearch}`} />
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            )}
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {query.data.items.map(event => (
+                <EventTile key={event.id} event={event} backTo={`/${currentSearch}`} />
+              ))}
+            </div>
             <nav className="mt-8 flex items-center justify-between gap-3" aria-label="Event pages">
               <Button
                 variant="outline"
@@ -341,28 +254,20 @@ export function Discover() {
 }
 
 function Notice({
-  icon,
   title,
   text,
   role,
   children,
 }: {
-  icon: LucideIcon
   title: string
   text: string
   role?: 'alert'
   children: ReactNode
 }) {
   return (
-    <div
-      className="mt-6 flex flex-col items-center rounded-lg border border-dashed px-6 py-14 text-center"
-      role={role}
-    >
-      <div className="flex size-10 items-center justify-center rounded-md border bg-card text-muted-foreground">
-        {createElement(icon, { className: 'size-5', 'aria-hidden': true })}
-      </div>
-      <h3 className="mt-4 text-sm font-medium">{title}</h3>
-      <p className="mt-1 max-w-sm text-sm text-muted-foreground">{text}</p>
+    <div className="mt-6 rounded-lg border border-dashed px-6 py-14 text-center" role={role}>
+      <h3 className="text-sm font-medium">{title}</h3>
+      <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">{text}</p>
       <div className="mt-5">{children}</div>
     </div>
   )

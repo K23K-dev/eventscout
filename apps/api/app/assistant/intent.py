@@ -19,17 +19,16 @@ the new message changes: use "unchanged" or null for anything it does not mentio
 constraints carry over. Never add a constraint the person did not state.
 
 - query: a short standalone description of what to look for, written for semantic search, such
-  as "live jazz performances". Mention who it is for when they say so. Null when the message
-  keeps the current topic, such as "only free ones".
-- keywords: 1-4 distinctive words or short phrases likely to appear in matching listings. Null
-  exactly when query is null.
+  as "live jazz performances". Mention who it is for, or a venue they name, when they say so.
+  Null when the message keeps the current topic, such as "only free ones".
+- keywords: 1-4 distinctive words or short phrases likely to appear in matching listings,
+  including any venue they name. Null exactly when query is null.
 - dates: this_weekend is the coming Saturday and Sunday; next_days takes days; between takes start
   and an inclusive end. Use "any" when they drop a date limit.
 - region: "gt" only for Georgia Tech or on campus; "atlanta" only when they exclude campus. Every
   event is in the Atlanta area, so "in Atlanta" alone changes nothing.
 - price: "free" only when they ask for free events; "any" when they drop that limit.
 - location_kind: "online" or "in_person" only when they say so; "any" when they drop it.
-- venue: a venue they name; "" to drop an earlier venue; null otherwise.
 - clarification: a short question only when the message cannot become a search, such as a
   greeting. Otherwise null.
 """
@@ -63,7 +62,6 @@ class SearchIntent(BaseModel):
     region: Literal["unchanged", "any", "gt", "atlanta"]
     price: Literal["unchanged", "any", "free"]
     location_kind: Literal["unchanged", "any", "in_person", "online"]
-    venue: str | None = Field(description="Venue named in this message; empty to drop one")
     clarification: str | None = Field(description="Question to ask when no search is possible")
 
 
@@ -77,7 +75,6 @@ class SearchState(BaseModel):
     region: Literal["gt", "atlanta"] | None
     price_status: Literal["free"] | None
     location_kind: Literal["in_person", "online"] | None
-    venue: str | None
 
     def filters(self) -> EventFilters:
         return EventFilters(
@@ -86,7 +83,6 @@ class SearchState(BaseModel):
             region=self.region,
             price_status=self.price_status,
             location_kind=self.location_kind,
-            venue=self.venue,
         )
 
     def keyword_query(self) -> str:
@@ -131,7 +127,6 @@ def apply_intent(state: SearchState | None, intent: SearchIntent, today: date) -
         region=None,
         price_status=None,
         location_kind=None,
-        venue=None,
     )
     date_from, date_to = resolve_dates(intent.dates, today, (current.date_from, current.date_to))
     merged: dict[str, Any] = {
@@ -142,7 +137,6 @@ def apply_intent(state: SearchState | None, intent: SearchIntent, today: date) -
         "region": _change(intent.region, current.region),
         "price_status": _change(intent.price, current.price_status),
         "location_kind": _change(intent.location_kind, current.location_kind),
-        "venue": current.venue if intent.venue is None else intent.venue.strip() or None,
     }
     return SearchState.model_validate(merged)
 

@@ -271,7 +271,7 @@ def _describe_search(search: SearchState | None) -> dict[str, Any] | None:
         "looking_for": search.query or "any events",
         "dates": f"{_day(search.date_from)} to {_day(last_day)}",
     }
-    for name in ("region", "price_status", "location_kind", "venue"):
+    for name in ("region", "price_status", "location_kind"):
         if (value := getattr(search, name)) is not None:
             described[name] = value
     return described

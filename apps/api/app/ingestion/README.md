@@ -24,7 +24,7 @@ EventStore.upsert_group, 4 writers                 storage/
 
 - **One import at a time.** A Postgres advisory lock enforces this. The workflow's concurrency group also prevents overlapping scheduled runs.
 - **The window is now → +90 days.** Events already known to the catalog stay matched even when their dates move outside it, so reschedules aren't lost.
-- **The report is JSON.** It lists records seen and created/updated/unchanged/issues per calendar, plus `unique_events`: the upcoming, scheduled events this run imported. The workflow turns it into a step summary.
+- **The report is JSON.** It lists records seen and issues per calendar, plus `unique_events`: the upcoming, scheduled events this run imported. The workflow turns it into a step summary.
 
 ## Adapters
 

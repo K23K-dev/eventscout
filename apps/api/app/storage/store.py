@@ -7,13 +7,7 @@ from uuid import UUID
 from psycopg import AsyncConnection, sql
 from psycopg.types.json import Jsonb
 
-from app.storage.models import (
-    EventContent,
-    EventObservation,
-    Source,
-    SourceInput,
-    UpsertResult,
-)
+from app.storage.models import EventContent, EventObservation, Source, SourceInput
 
 _CONTENT_COLUMNS = tuple(EventContent.model_fields)
 _COLUMN_NAMES = sql.SQL(", ").join(sql.Identifier(name) for name in _CONTENT_COLUMNS)
@@ -63,7 +57,7 @@ class EventStore:
         canonical_event_id: UUID | None = None,
         merge_ids: tuple[UUID, ...] = (),
         update_content: bool = True,
-    ) -> list[UpsertResult]:
+    ) -> None:
         """Save a reconciled group and its aliases in one transaction.
 
         The first observation supplies canonical content. Every member preserves
@@ -153,13 +147,12 @@ class EventStore:
                 cursor = await self._connection.execute(
                     sql.SQL(
                         "INSERT INTO eventscout.event_occurrences ({}, content_hash) "
-                        "VALUES ({}, %s) RETURNING id, content_version"
+                        "VALUES ({}, %s) RETURNING id"
                     ).format(_COLUMN_NAMES, _CONTENT_PLACEHOLDERS),
                     (*values, content_hash),
                 )
                 event = await cursor.fetchone()
                 assert event is not None
-                changed = True
             else:
                 event = locked[canonical_event_id]
                 changed = update_content and event["content_hash"] != content_hash
@@ -171,15 +164,13 @@ class EventStore:
                 ):
                     raise StaleObservationError("conflicting content at the same observation time")
                 if changed:
-                    cursor = await self._connection.execute(
+                    await self._connection.execute(
                         sql.SQL(
                             "UPDATE eventscout.event_occurrences SET {}, content_hash = %s "
-                            "WHERE id = %s RETURNING id, content_version"
+                            "WHERE id = %s"
                         ).format(_CONTENT_ASSIGNMENTS),
                         (*values, content_hash, event["id"]),
                     )
-                    event = await cursor.fetchone()
-                    assert event is not None
 
             if update_content:
                 await self._connection.execute(
@@ -202,9 +193,8 @@ class EventStore:
                     """,
                     (event["id"], list(merge_ids), list(merge_ids)),
                 )
-            results: list[UpsertResult] = []
-            for index, (observation, identity, content, record) in enumerate(
-                zip(observations, identities, contents, records, strict=True)
+            for observation, identity, content, record in zip(
+                observations, identities, contents, records, strict=True
             ):
                 metadata = (
                     observation.observed_at,
@@ -213,17 +203,15 @@ class EventStore:
                     Jsonb(content),
                 )
                 if record is None:
-                    cursor = await self._connection.execute(
+                    await self._connection.execute(
                         """
                         INSERT INTO eventscout.source_records
                             (event_id, source_id, external_id, occurrence_key, observed_at,
                              source_updated_at, raw_payload, content)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (event["id"], *identity, *metadata),
                     )
-                    record = await cursor.fetchone()
-                    assert record is not None
                 else:
                     await self._connection.execute(
                         """
@@ -235,15 +223,6 @@ class EventStore:
                         """,
                         (*metadata, record["id"]),
                     )
-                results.append(
-                    UpsertResult(
-                        event_id=event["id"],
-                        source_record_id=record["id"],
-                        content_version=event["content_version"],
-                        changed=changed and index == 0,
-                    )
-                )
-            return results
 
 
 def _content_values(content: EventContent) -> tuple[Any, ...]:

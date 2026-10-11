@@ -3,7 +3,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.events.models import EventResponse
 
@@ -28,13 +28,11 @@ class TurnView(TurnAnswer):
     id: UUID
     message: str
     status: Literal["running", "done", "failed"]
-    created_at: AwareDatetime
 
 
 class ConversationSummary(BaseModel):
     id: UUID
     title: str
-    updated_at: AwareDatetime
 
 
 class ConversationDetail(ConversationSummary):

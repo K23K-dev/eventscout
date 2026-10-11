@@ -16,7 +16,6 @@ The public, read-only catalog API. The web app's Discover and event pages use it
 | `q` | Keywords; supports quoted phrases and `or` (Postgres `websearch_to_tsquery`) |
 | `date_from`, `date_to` | A window of America/New_York calendar dates. The end is exclusive; the default is today plus 30 days, and the maximum is 90 days. |
 | `region`, `price_status`, `location_kind` | Exact matches on the normalized fields |
-| `venue` | Case-insensitive substring of the venue |
 | `topic` | Events enrichment tagged with that topic |
 | `page`, `page_size` | Offset pagination, up to 100 per page |
 

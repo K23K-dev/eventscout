@@ -26,11 +26,11 @@ src/
    └─ topics.ts   the enrichment topics' labels, icons and colors
 ```
 
-| Route                   | Page                                                                                                                                               |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/`                     | `Discover`: search, date range, Free / Georgia Tech toggles, topic, and paged results (grouped by day when browsing, by best match when searching) |
-| `/events/:eventId`      | `EventDetail`: picture, summary, facts, the organizer's link, Add to Google Calendar                                                               |
-| `/ask/:conversationId?` | `Ask`: the chat, with history in a sidebar (a sheet on phones)                                                                                     |
+| Route                   | Page                                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                     | `Discover`: search, date range, Free / Georgia Tech toggles, topic, and a paged grid of cards (soonest first, or best match when searching) |
+| `/events/:eventId`      | `EventDetail`: picture, summary, facts, the organizer's link, Add to Google Calendar                                                        |
+| `/ask/:conversationId?` | `Ask`: the chat, with history in a sidebar (a sheet on phones)                                                                              |
 
 ## Design decisions
 

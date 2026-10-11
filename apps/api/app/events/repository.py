@@ -10,7 +10,7 @@ from app.events.models import CATALOG_TIMEZONE, EventFilters, EventPage, EventRe
 from app.storage.models import EventContent
 
 _PUBLIC_COLUMNS = sql.SQL(", ").join(
-    sql.Identifier("e", name) for name in ("id", "content_version", *EventContent.model_fields)
+    sql.Identifier("e", name) for name in ("id", *EventContent.model_fields)
 )
 # The calendars listing each event, and its AI summary and topics.
 _SOURCE_DETAILS = sql.SQL("""
@@ -90,8 +90,6 @@ class EventRepository:
             page=filters.page,
             page_size=filters.page_size,
             has_more=offset + len(items) < total,
-            date_from=filters.date_from,
-            date_to=filters.end_date,
         )
 
     async def get(self, event_id: UUID) -> EventResponse | None:
@@ -174,7 +172,4 @@ class EventRepository:
                     @> ARRAY[%(topic)s]::text[]
                 """)
             )
-        if filters.venue:
-            parameters["venue"] = filters.venue
-            clauses.append(sql.SQL("strpos(lower(e.venue), lower(%(venue)s)) > 0"))
         return sql.SQL(" AND ").join(clauses), parameters

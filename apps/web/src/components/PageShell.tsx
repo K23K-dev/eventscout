@@ -3,16 +3,7 @@ import { useEffect, type ReactNode } from 'react'
 import { Link, NavLink, useLocation, useNavigationType } from 'react-router-dom'
 import { cn } from '@/utils/cn'
 import { signIn, signOut, useSession } from '@/lib/auth'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button, buttonVariants } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 
 const sections = [
   ['/', 'Discover', Compass],
@@ -78,34 +69,13 @@ export function PageShell({ children }: { children: ReactNode }) {
 function Account() {
   const session = useSession()
   if (session === undefined) return <div className="size-8" aria-hidden="true" />
-  if (!session)
-    return (
-      <Button size="sm" onClick={() => void signIn()}>
-        Sign in
-      </Button>
-    )
-  const { email, user_metadata: profile } = session.user
-  const name: string = profile.full_name || email || 'Your account'
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Account">
-          <Avatar className="size-8">
-            <AvatarImage src={profile.avatar_url} alt="" referrerPolicy="no-referrer" />
-            <AvatarFallback className="text-xs">{name.charAt(0).toUpperCase()}</AvatarFallback>
-          </Avatar>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuLabel className="font-normal">
-          <p className="truncate text-sm font-medium">{name}</p>
-          {email && <p className="truncate text-xs text-muted-foreground">{email}</p>}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void signOut()}>
-          <LogOut aria-hidden="true" /> Sign out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+  return session ? (
+    <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+      <LogOut aria-hidden="true" /> Sign out
+    </Button>
+  ) : (
+    <Button size="sm" onClick={() => void signIn()}>
+      Sign in
+    </Button>
   )
 }

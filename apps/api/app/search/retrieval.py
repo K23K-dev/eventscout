@@ -112,8 +112,7 @@ async def _vector_ranking(
         matches = await index.documents.search(
             namespace=NAMESPACE,
             score_by=[DenseVectorQuery(field="embedding", values=response.data[0].embedding)],
-            # Pinecone can't match venue substrings, so look deeper and let Postgres filter.
-            top_k=depth * 10 if filters.venue else depth,
+            top_k=depth,
             filter=vector_filter(filters),
             timeout=5,
         )

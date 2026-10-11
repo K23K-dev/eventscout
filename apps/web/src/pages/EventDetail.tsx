@@ -16,14 +16,7 @@ import { ApiError, fetchEvent, type Event } from '@/lib/api'
 import { Cover, TopicBadge } from '@/components/EventCard'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  eventDate,
-  googleCalendarUrl,
-  locationLabels,
-  priceLabels,
-  timeRange,
-  today,
-} from '@/utils/format'
+import { googleCalendarUrl, locationLabels, priceLabels, today, whenLabel } from '@/utils/format'
 import { topics } from '@/utils/topics'
 
 export function EventDetail() {
@@ -184,9 +177,8 @@ function EventInformation({ event }: { event: Event }) {
         <div className="min-w-0 lg:col-start-1 lg:row-start-2">
           <dl className="divide-y rounded-lg border bg-card text-sm">
             <Detail icon={CalendarDays} label="When">
-              <p>{eventDate(event)}</p>
-              <p className="text-muted-foreground">
-                {timeRange(event)}
+              <p>
+                {whenLabel(event, now)}
                 {!event.all_day && event.starts_at ? ' (Eastern)' : ''}
               </p>
             </Detail>

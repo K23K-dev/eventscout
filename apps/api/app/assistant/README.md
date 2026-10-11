@@ -19,7 +19,7 @@ START ─▶ parse ──clarification──▶ END
         validate ───────────────────┴──────┴─▶ END
 ```
 
-- **parse** (`intent.py`). GPT-5.6 Luna turns the message into a `SearchIntent`: only what this message changes. That covers the query and keywords, a date phrase, region, price, format, venue, and a clarification question for messages that can't become a search, such as greetings. Code then merges the intent into the conversation's `SearchState`. Unmentioned constraints carry over, dates like "this weekend" resolve in code against today in Atlanta, and windows are capped at 90 days. The model never computes dates.
+- **parse** (`intent.py`). GPT-5.6 Luna turns the message into a `SearchIntent`: only what this message changes. That covers the query and keywords (including any venue named), a date phrase, region, price, format, and a clarification question for messages that can't become a search, such as greetings. Code then merges the intent into the conversation's `SearchState`. Unmentioned constraints carry over, dates like "this weekend" resolve in code against today in Atlanta, and windows are capped at 90 days. The model never computes dates.
 - **retrieve** finds 8 candidates with [hybrid search](../search/README.md), inside a read-only snapshot transaction.
 - **explain** sends the search and the numbered candidates to the model as data. Each candidate carries its title, when, where, format, price, who can attend, publisher, and a description excerpt. The model writes 2–4 sentences citing candidates as `[n]`, and says whether anything matched. When nothing fits, it may also suggest a broader search.
 - **validate** is plain code:
@@ -47,9 +47,9 @@ Before streaming starts, the dependency `start_turn` raises anything that can be
 - 401: no sign-in
 - 404: unknown conversation
 - 409: an answer is already being written in this conversation
-- 503: AI isn't configured or reachable
+- 503: AI isn't configured
 
-The answer is produced in a background task that outlives the request. The stream only relays it through a queue, so closing the tab or refreshing mid-answer doesn't lose it; the turn is saved anyway, and the web app polls until it's done. Each server process writes at most two answers at once. The OpenAI and Pinecone clients open on first use, so the API starts without them.
+The answer is produced in a background task that outlives the request. The stream only relays it through a queue, so closing the tab or refreshing mid-answer doesn't lose it; the turn is saved anyway, and the web app polls until it's done. Each server process writes at most two answers at once. Each answer opens its own OpenAI and Pinecone clients, so the API starts without either service, and an outage shows up as a failed answer.
 
 ## Conversations
 

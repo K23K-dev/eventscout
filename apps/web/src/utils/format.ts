@@ -18,7 +18,7 @@ export function today() {
   return calendarDate(new Date().toISOString())
 }
 
-export function calendarDate(value: string) {
+function calendarDate(value: string) {
   return value.length === 10
     ? value
     : new Intl.DateTimeFormat('en-CA', {
@@ -69,24 +69,8 @@ export function dateRange(start: string, end: string) {
   return start === end ? formatDate(start) : `${formatDate(start)} – ${formatDate(end)}`
 }
 
-export function eventDate(event: Event) {
-  const start = event.all_day ? event.start_date : event.starts_at
-  if (!start) return 'Date to be announced'
-  const end = event.all_day && event.end_date ? addDays(event.end_date, -1) : event.ends_at
-  const options: Intl.DateTimeFormatOptions = {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }
-  const first = formatDate(start, options)
-  return end && first !== formatDate(end, options)
-    ? `${first} – ${formatDate(end, options)}`
-    : first
-}
-
 /** When it starts and ends (the end date is exclusive for all-day events). */
-export function span(event: Event) {
+function span(event: Event) {
   const start = event.all_day ? event.start_date : event.starts_at
   const end = event.all_day && event.end_date ? addDays(event.end_date, -1) : event.ends_at
   return { start, end, multipleDays: !!(start && end && calendarDate(start) !== calendarDate(end)) }
@@ -107,7 +91,7 @@ function clock(value: string) {
 }
 
 /** A compact time of day: "7–9 PM", "10 AM – 2 PM", or "All day". */
-export function timeRange(event: Event) {
+function timeRange(event: Event) {
   if (event.all_day) return 'All day'
   if (!event.starts_at) return 'Time TBA'
   const start = clock(event.starts_at)
@@ -119,8 +103,8 @@ export function timeRange(event: Event) {
     : `${start.time} ${start.period} – ${end.time} ${end.period}`
 }
 
-/** When it happens, as briefly as the context allows; lists grouped by day leave the date out. */
-export function whenLabel(event: Event, now: number, withDate: boolean) {
+/** When it happens, briefly: "Sat, Oct 4 · 7–9 PM", "Sat, Oct 4 – Sun, Oct 5", or "Until Nov 2". */
+export function whenLabel(event: Event, now: number) {
   const { start, end, multipleDays } = span(event)
   if (!start) return 'Date TBA'
   const day = (value: string) =>
@@ -131,21 +115,7 @@ export function whenLabel(event: Event, now: number, withDate: boolean) {
     (event.all_day ? end >= today() : Date.parse(end) > now)
   )
     return `Until ${formatDate(end)}`
-  if (multipleDays)
-    return withDate ? `${day(start)} – ${day(end!)}` : `${formatDate(start)} – ${formatDate(end!)}`
-  return withDate ? `${day(start)} · ${timeRange(event)}` : timeRange(event)
-}
-
-/** A day heading: "Today", "Tomorrow", or the weekday, with the date beneath. */
-export function dayHeading(day: string) {
-  const now = today()
-  const title =
-    day === now
-      ? 'Today'
-      : day === addDays(now, 1)
-        ? 'Tomorrow'
-        : formatDate(day, { weekday: 'long' })
-  return { title, date: formatDate(day, { month: 'short', day: 'numeric' }) }
+  return multipleDays ? `${day(start)} – ${day(end!)}` : `${day(start)} · ${timeRange(event)}`
 }
 
 const stamp = (value: string) =>

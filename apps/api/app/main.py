@@ -6,19 +6,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.assistant.router import AssistantClients, create_assistant_router
+from app.assistant.router import AnswerTasks, create_assistant_router
 from app.events.router import create_events_router
 from app.settings import Settings
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings if settings is not None else Settings()
-    clients = AssistantClients(config)
+    tasks = AnswerTasks()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
-        await clients.close()
+        tasks.cancel()
 
     application = FastAPI(title="EventScout", version="0.1.0", lifespan=lifespan)
     application.add_middleware(
@@ -33,7 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     application.include_router(create_events_router(config))
-    application.include_router(create_assistant_router(config, clients))
+    application.include_router(create_assistant_router(config, tasks))
     return application
 
 

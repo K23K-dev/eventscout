@@ -19,18 +19,15 @@ export interface Event {
   all_day: boolean
   start_date: string | null
   end_date: string | null
-  timezone: string
   venue: string | null
   location_kind: 'in_person' | 'online' | 'hybrid' | 'unknown'
   region: 'gt' | 'atlanta'
   price_status: 'free' | 'paid' | 'conditional' | 'unknown'
   price_details: string | null
   audience: string[]
-  tags: string[]
   source_url: string
   registration_url: string | null
   status: 'scheduled' | 'cancelled'
-  content_version: number
   sources: EventSource[]
   summary: string | null
   topics: string[]
@@ -43,9 +40,6 @@ export interface EventPage {
   page: number
   page_size: number
   has_more: boolean
-  date_from: string
-  date_to: string
-  timezone: 'America/New_York'
 }
 
 export class ApiError extends Error {
@@ -65,35 +59,34 @@ const catalogErrors: Record<number, string> = {
 
 async function request<T>(
   path: string,
-  signal: AbortSignal,
-  errors = catalogErrors,
-  headers: HeadersInit = {},
+  init: RequestInit & { errors?: Record<number, string> } = {},
 ): Promise<T> {
+  const { errors = catalogErrors, signal, ...options } = init
   try {
+    const timeout = AbortSignal.timeout(12_000)
     const response = await fetch(`${apiBaseUrl}${path}`, {
-      headers,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
+      ...options,
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
     if (!response.ok) {
       throw new ApiError(
         response.status,
-        errors[response.status] ??
-          'The event catalog is temporarily unavailable. Please try again.',
+        errors[response.status] ?? 'EventScout is temporarily unavailable. Please try again.',
       )
     }
-    return (await response.json()) as T
+    return (response.status === 204 ? undefined : await response.json()) as T
   } catch (error) {
-    if (signal.aborted || error instanceof ApiError) throw error
-    throw new ApiError(0, 'Cannot reach the event catalog. Please try again.')
+    if (signal?.aborted || error instanceof ApiError) throw error
+    throw new ApiError(0, 'Cannot reach EventScout. Please try again.')
   }
 }
 
 export function fetchEvents(params: URLSearchParams, signal: AbortSignal): Promise<EventPage> {
-  return request<EventPage>(`/api/events?${params}`, signal)
+  return request<EventPage>(`/api/events?${params}`, { signal })
 }
 
 export function fetchEvent(id: string, signal: AbortSignal): Promise<Event> {
-  return request<Event>(`/api/events/${encodeURIComponent(id)}`, signal)
+  return request<Event>(`/api/events/${encodeURIComponent(id)}`, { signal })
 }
 
 export interface Answer {
@@ -106,14 +99,12 @@ export interface Answer {
 export interface ConversationSummary {
   id: string
   title: string
-  updated_at: string
 }
 
 export interface StoredTurn extends Answer {
   id: string
   message: string
   status: 'running' | 'done' | 'failed'
-  created_at: string
 }
 
 export interface Conversation extends ConversationSummary {
@@ -144,30 +135,17 @@ async function signedIn(): Promise<Record<string, string>> {
 }
 
 export async function fetchConversations(signal: AbortSignal): Promise<ConversationSummary[]> {
-  return request<ConversationSummary[]>('/api/conversations', signal, chatErrors, await signedIn())
+  return request('/api/conversations', { signal, errors: chatErrors, headers: await signedIn() })
 }
 
 export async function fetchConversation(id: string, signal: AbortSignal): Promise<Conversation> {
-  return request<Conversation>(
-    `/api/conversations/${encodeURIComponent(id)}`,
-    signal,
-    chatErrors,
-    await signedIn(),
-  )
+  const path = `/api/conversations/${encodeURIComponent(id)}`
+  return request(path, { signal, errors: chatErrors, headers: await signedIn() })
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const headers = await signedIn()
-  const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers,
-  }).catch(() => null)
-  if (!response?.ok && response?.status !== 404) {
-    throw new ApiError(
-      response?.status ?? 0,
-      'That conversation could not be deleted. Please try again.',
-    )
-  }
+  const path = `/api/conversations/${encodeURIComponent(id)}`
+  return request(path, { method: 'DELETE', errors: chatErrors, headers: await signedIn() })
 }
 
 /** Send a chat message and report each Server-Sent Event as it arrives. EventSource can't POST. */

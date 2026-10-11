@@ -35,7 +35,7 @@ A GitHub Actions workflow runs `python -m app.ingestion` every six hours. It imp
 
 Top-level modules:
 
-- `main.py` builds the FastAPI app: CORS, `/health`, and the two routers. Starting it needs no external service, and AI clients open on first use.
+- `main.py` builds the FastAPI app: CORS, `/health`, and the two routers. Starting it needs no external service; each chat answer opens its own AI clients.
 - `settings.py` holds configuration from `EVENTSCOUT_*` environment variables or `apps/api/.env`.
 - `database.py` opens one autocommit psycopg connection per caller, with dict rows. Write transactions are owned by the code that writes.
 - `auth.py` verifies Supabase access tokens: ES256 signatures checked against the project's published keys, plus issuer, audience and expiry.

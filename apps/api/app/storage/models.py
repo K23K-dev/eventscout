@@ -132,10 +132,3 @@ class EventObservation(_FrozenModel):
     @classmethod
     def normalize_time(cls, value: datetime | None) -> datetime | None:
         return value.astimezone(UTC) if value is not None else None
-
-
-class UpsertResult(_FrozenModel):
-    event_id: UUID
-    source_record_id: UUID
-    content_version: int = Field(ge=1)
-    changed: bool

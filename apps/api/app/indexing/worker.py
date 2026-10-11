@@ -34,8 +34,6 @@ class IndexReport:
     claimed: int = 0
     embedded: int = 0
     removed: int = 0
-    expired: int = 0
-    pruned: int = 0
     superseded: int = 0
     tokens: int = 0
     errors: list[str] = field(default_factory=list)
@@ -171,7 +169,7 @@ async def _drain(
         response = await index.documents.delete(
             namespace=NAMESPACE, filter={"ends_at": {"$lte": int(datetime.now(UTC).timestamp())}}
         )
-        report.pruned = response.matched_records or 0
+        report.removed += response.matched_records or 0
     except (PineconeError, TimeoutError) as exc:
         report.errors.append(f"{type(exc).__name__}: {exc}"[:500])
     return report
@@ -198,7 +196,6 @@ async def _apply(
     now = datetime.now(UTC)
     upserts: list[tuple[UUID, EventContent, tuple[datetime, datetime], str]] = []
     removed: list[str] = []
-    expired: list[str] = []
     superseded = 0
     for job in jobs:
         event = events[job["event_id"]]
@@ -209,14 +206,15 @@ async def _apply(
             {name: event[name] for name in EventContent.model_fields}
         )
         bounds = event_bounds(content)
+        # Cancelled, merged, and ended events leave the index.
         if (
             job["operation"] == "delete"
             or event["merged_into"] is not None
             or content.status == "cancelled"
+            or bounds is None
+            or bounds[1] <= now
         ):
             removed.append(str(event["id"]))
-        elif bounds is None or bounds[1] <= now:
-            expired.append(str(event["id"]))
         else:
             text = embedding_text(content, event["summary"], event["topics"] or ())
             upserts.append((event["id"], content, bounds, text))
@@ -234,8 +232,8 @@ async def _apply(
             ],
         )
         report.tokens += response.usage.total_tokens
-    if removed or expired:
-        await index.documents.delete(namespace=NAMESPACE, ids=removed + expired)
+    if removed:
+        await index.documents.delete(namespace=NAMESPACE, ids=removed)
     await connection.execute(
         """UPDATE eventscout.index_jobs
            SET status = 'succeeded', finished_at = clock_timestamp(), last_error = NULL
@@ -244,7 +242,6 @@ async def _apply(
     )
     report.embedded += len(upserts)
     report.removed += len(removed)
-    report.expired += len(expired)
     report.superseded += superseded
 
 

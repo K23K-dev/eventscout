@@ -54,7 +54,6 @@ class EventFilters(BaseModel):
     region: Literal["gt", "atlanta"] | None = None
     location_kind: Literal["in_person", "online", "hybrid", "unknown"] | None = None
     price_status: Literal["free", "paid", "conditional", "unknown"] | None = None
-    venue: str | None = Field(default=None, max_length=200)
     topic: Topic | None = None
     page: int = Field(default=1, ge=1, le=10_000)
     page_size: int = Field(default=20, ge=1, le=100)
@@ -76,7 +75,6 @@ class EventSource(SourceInput):
 
 class EventResponse(EventContent):
     id: UUID
-    content_version: int
     sources: list[EventSource]
     summary: str | None = Field(default=None, description="One-line summary written by enrichment.")
     topics: list[str] = Field(default_factory=list, description="1-3 enrichment Topic values.")
@@ -89,6 +87,3 @@ class EventPage(BaseModel):
     page: int
     page_size: int
     has_more: bool
-    date_from: date
-    date_to: date
-    timezone: Literal["America/New_York"] = "America/New_York"

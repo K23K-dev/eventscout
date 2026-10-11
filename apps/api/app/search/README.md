@@ -18,7 +18,7 @@ query + keywords + EventFilters
 
 1. **Two rankings, gathered concurrently.** Keyword search catches exact names, like a band or a speaker. Vector search catches paraphrases ("something with live music" → a jazz brunch). Each returns up to 30 IDs.
 2. **Fusion by rank, not score.** Reciprocal rank fusion adds `1 / (60 + rank)` from each list. The two engines' scores aren't comparable, so only ranks are used. An event both engines rank highly wins.
-3. **Postgres has the last word.** Pinecone's metadata filter is a loose superset: date overlap plus region, price and format. It can't do venue substrings, so when a venue is set it fetches ten times deeper. Hydrating the fused IDs through `get_many` re-applies every exact filter and drops events that have since ended, been cancelled, or been merged. A stale vector can never put an ineligible event in front of a user.
+3. **Postgres has the last word.** Pinecone's metadata filter is a loose superset: date overlap plus region, price and format. Hydrating the fused IDs through `get_many` re-applies every exact filter and drops events that have since ended, been cancelled, or been merged. A stale vector can never put an ineligible event in front of a user.
 4. **One card per real event.** `distinct` keeps the best-ranked of listings with the same title at the same time, or the same title at the same venue. Dates are stripped from titles first, so the sessions of a series collapse too.
 
 ## Degrading gracefully

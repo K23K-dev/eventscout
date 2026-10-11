@@ -27,9 +27,6 @@ class SourceReport:
     source: str
     publisher: str
     records_seen: int = 0
-    created: int = 0
-    updated: int = 0
-    unchanged: int = 0
     issues: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -224,7 +221,7 @@ async def run_import(settings: Settings, *, source_names: list[str] | None = Non
                     primary = group.primary
                     members = sorted(group.observations, key=lambda member: member is not primary)
                     try:
-                        results = await writer_store.upsert_group(
+                        await writer_store.upsert_group(
                             [
                                 EventObservation(
                                     source_id=source_ids[member.source],
@@ -247,14 +244,6 @@ async def run_import(settings: Settings, *, source_names: list[str] | None = Non
                                 "group unchanged"
                             )
                         continue
-                    for member, result in zip(members, results, strict=True):
-                        summary = summaries[member.source]
-                        if not result.changed:
-                            summary.unchanged += 1
-                        elif result.content_version == 1:
-                            summary.created += 1
-                        else:
-                            summary.updated += 1
                     completed += 1
                     if completed % 250 == 0 or completed == len(groups):
                         logger.info("Stored %s/%s unique event groups", completed, len(groups))

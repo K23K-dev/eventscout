@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from openai import AsyncOpenAI
-from pinecone import AsyncIndex, AsyncPinecone
+from pinecone import AsyncPinecone
 from psycopg import AsyncConnection
 from psycopg import Error as DatabaseError
 
@@ -38,47 +38,21 @@ logger = logging.getLogger(__name__)
 _FAILED = "Something went wrong answering that. Please try again."
 
 
-class AssistantClients:
-    """OpenAI and Pinecone clients shared by every request, opened on first use."""
+class AnswerTasks:
+    """Answers run to completion in the background, even after their request ends."""
 
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-        self._stack = AsyncExitStack()
-        self._lock = asyncio.Lock()
-        self._clients: tuple[AsyncOpenAI, AsyncIndex] | None = None
+    def __init__(self) -> None:
         self._tasks: set[asyncio.Task[None]] = set()
         self.writing = asyncio.Semaphore(2)  # Answers this server writes at once.
 
-    async def get(self) -> tuple[AsyncOpenAI, AsyncIndex]:
-        async with self._lock:
-            if self._clients is None:
-                openai_key = self._settings.openai_api_key
-                pinecone_key = self._settings.pinecone_api_key
-                assert openai_key is not None and pinecone_key is not None
-                async with AsyncExitStack() as stack:
-                    openai = await stack.enter_async_context(
-                        AsyncOpenAI(api_key=openai_key.get_secret_value())
-                    )
-                    pinecone = await stack.enter_async_context(
-                        AsyncPinecone(api_key=pinecone_key.get_secret_value())
-                    )
-                    index = await stack.enter_async_context(
-                        await pinecone.index(self._settings.pinecone_index)
-                    )
-                    self._stack = stack.pop_all()
-                self._clients = openai, index
-            return self._clients
-
     def spawn(self, work: Coroutine[Any, Any, None]) -> None:
-        """Run work to completion in the background, even after its request ends."""
         task = asyncio.create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def close(self) -> None:
+    def cancel(self) -> None:
         for task in self._tasks:
             task.cancel()
-        await self._stack.aclose()
 
 
 @dataclass
@@ -90,7 +64,7 @@ class StartedTurn:
     previous: SearchState | None
 
 
-def create_assistant_router(settings: Settings, clients: AssistantClients) -> APIRouter:
+def create_assistant_router(settings: Settings, tasks: AnswerTasks) -> APIRouter:
     router = APIRouter(prefix="/api")
     # A Supabase access token from Google sign-in.
     bearer = HTTPBearer(auto_error=False)
@@ -137,13 +111,6 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
         store = ConversationStore(connection, owner)
         if settings.missing("openai_api_key", "pinecone_api_key"):
             raise HTTPException(status_code=503, detail="AI search isn't configured.")
-        try:
-            await clients.get()
-        except Exception:
-            logger.exception("Could not open the AI search clients")
-            raise HTTPException(
-                status_code=503, detail="AI search is temporarily unavailable."
-            ) from None
         if request.conversation_id is None:
             conversation_id = await store.create_conversation(request.message[:80])
         elif await store.conversation(request.conversation_id) is None:
@@ -164,17 +131,22 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
     ) -> None:
         """Answer and save the turn even if the client leaves; the stream only relays events."""
         today = datetime.now(CATALOG_TIMEZONE).date()
+        assert settings.openai_api_key and settings.pinecone_api_key  # start_turn checked them
         try:
             async with connect_database(settings) as connection:
                 store = ConversationStore(connection, started.owner)
                 try:
-                    openai, index = await clients.get()
-                    repository = EventRepository(connection)
-                    services = Services(
-                        connection, repository, openai, index, settings.openai_model
-                    )
                     turn: Turn = {}
-                    async with clients.writing:
+                    async with (
+                        tasks.writing,
+                        AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value()) as openai,
+                        AsyncPinecone(api_key=settings.pinecone_api_key.get_secret_value()) as pc,
+                        await pc.index(settings.pinecone_index) as index,
+                    ):
+                        repository = EventRepository(connection)
+                        services = Services(
+                            connection, repository, openai, index, settings.openai_model
+                        )
                         steps = run_turn(
                             build_graph(services), started.message, today, started.previous
                         )
@@ -230,7 +202,7 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
         yield ServerSentEvent(event="turn", data=ids)
         yield ServerSentEvent(event="status", data={"stage": "understanding"})
         events: asyncio.Queue[ServerSentEvent | None] = asyncio.Queue()
-        clients.spawn(write_answer(started, events))
+        tasks.spawn(write_answer(started, events))
         while (event := await events.get()) is not None:
             yield event
 
@@ -258,7 +230,6 @@ def create_assistant_router(settings: Settings, clients: AssistantClients) -> AP
                 id=row["id"],
                 message=row["message"],
                 status=row["status"],
-                created_at=row["created_at"],
                 reply=row["reply"],
                 cards=[events[card] for card in row["cards"] if card in events],
                 clarification=row["clarification"],

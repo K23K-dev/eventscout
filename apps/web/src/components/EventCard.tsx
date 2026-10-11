@@ -93,16 +93,8 @@ function Venue({ event }: { event: Event }) {
   )
 }
 
-/** A picture card in an event grid; the whole card opens the event. Day-grouped grids pass no date. */
-export function EventTile({
-  event,
-  backTo,
-  showDate = false,
-}: {
-  event: Event
-  backTo: string
-  showDate?: boolean
-}) {
+/** A picture card in an event grid; the whole card opens the event. */
+export function EventTile({ event, backTo }: { event: Event; backTo: string }) {
   const [now] = useState(Date.now)
   return (
     <article className="relative flex flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/40 has-[a:focus-visible]:ring-[3px] has-[a:focus-visible]:ring-ring/50">
@@ -114,9 +106,7 @@ export function EventTile({
         </div>
       </div>
       <div className="flex flex-1 flex-col p-3.5">
-        <p className="text-xs font-medium text-primary tabular-nums">
-          {whenLabel(event, now, showDate)}
-        </p>
+        <p className="text-xs font-medium text-primary tabular-nums">{whenLabel(event, now)}</p>
         <h3 className="mt-1 line-clamp-2 text-sm leading-5 font-medium">
           <Link
             className="after:absolute after:inset-0 focus-visible:outline-none"
@@ -155,7 +145,7 @@ export function EventCard({
               {number}
             </span>
           )}
-          {whenLabel(event, now, true)}
+          {whenLabel(event, now)}
         </p>
         <h3 className="mt-0.5 text-sm leading-5 font-medium">
           <Link
