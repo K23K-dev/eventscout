@@ -182,17 +182,6 @@ SOURCES = {
             ),
         ),
         _source(
-            "brookhaven-chamber",
-            "Brookhaven Chamber",
-            "Brookhaven Chamber Events",
-            "https://biz.brookhavencommerce.org/events/calendar",
-            partial(
-                chambermaster.collect,
-                calendar_url="https://biz.brookhavencommerce.org/events/calendar",
-                publisher="Brookhaven Chamber",
-            ),
-        ),
-        _source(
             "greater-perimeter-chamber",
             "Greater Perimeter Chamber",
             "Greater Perimeter Chamber Events",

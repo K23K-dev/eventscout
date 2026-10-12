@@ -40,7 +40,7 @@ EventStore.upsert_group, 4 writers                 storage/
 | `nature.py` | HTML month views; a Squarespace list read through its calendar-export links | Trees Atlanta, South Fork Conservancy |
 | `tribe.py` | The Events Calendar REST API | Piedmont Park, Cobb Travel & Tourism, ArtsATL |
 | `tech_village.py` | Webflow listing + detail pages | Atlanta Tech Village |
-| `chambermaster.py` | ChamberMaster month grids + detail pages | DeKalb, Brookhaven and Greater Perimeter chambers |
+| `chambermaster.py` | ChamberMaster month grids + detail pages | DeKalb and Greater Perimeter chambers |
 | `carbonhouse.py` | Venue month listings + showing pages | Atlanta Symphony, Fox Theatre, State Farm Arena |
 | `puppetry.py` | Month calendar, read with the publisher's 30-second delay | Center for Puppetry Arts |
 

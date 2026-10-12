@@ -40,4 +40,4 @@ The public, read-only catalog API. The web app's Discover and event pages use it
 
 Each request opens its own connection and runs in a `READ ONLY`, `REPEATABLE READ` transaction, so the count and the page come from one snapshot. A 5-second statement timeout and an 8-second overall timeout keep a slow database from tying up the server. Any database failure becomes a 503 ("temporarily unavailable"), which the web app shows as a retryable state.
 
-`EventResponse` is `EventContent` plus `id`, `content_version`, the source list, enrichment `summary`/`topics`, and `image_url`. It's the same shape the chat streams in its event cards.
+`EventResponse` is `EventContent` plus `id`, the source list, enrichment `summary`/`topics`, and `image_url`. It's the same shape the chat streams in its event cards.

@@ -24,8 +24,8 @@ class StaleObservationError(ValueError):
 class EventStore:
     """Use an idle autocommit connection with dict rows, dedicated to one caller.
 
-    Source record identity is (source_id, external_id, occurrence_key). Adapters must
-    choose a stable occurrence_key, never the occurrence's mutable scheduled date.
+    Source record identity is (source_id, external_id). Adapters must choose a stable
+    external_id, never the occurrence's mutable scheduled date.
     Older observations/revisions are rejected atomically. An omitted source revision
     preserves the last known revision. Concurrent callers need separate connections.
     """
@@ -64,10 +64,7 @@ class EventStore:
         its own content and freshness; a failed member rolls back the entire group.
         The caller must establish duplicate evidence before requesting a merge.
         """
-        identities = [
-            (observation.source_id, observation.external_id, observation.occurrence_key)
-            for observation in observations
-        ]
+        identities = [(member.source_id, member.external_id) for member in observations]
         contents = [observation.content.model_dump(mode="json") for observation in observations]
         content_hash = observations[0].content.content_hash()
         values = _content_values(observations[0].content)
@@ -84,7 +81,7 @@ class EventStore:
                     """
                     SELECT id, event_id, observed_at, source_updated_at, content
                     FROM eventscout.source_records
-                    WHERE source_id = %s AND external_id = %s AND occurrence_key = %s
+                    WHERE source_id = %s AND external_id = %s
                     """,
                     identity,
                 )
@@ -172,12 +169,6 @@ class EventStore:
                         (*values, content_hash, event["id"]),
                     )
 
-            if update_content:
-                await self._connection.execute(
-                    """UPDATE eventscout.event_occurrences
-                       SET last_verified_at = GREATEST(last_verified_at, %s) WHERE id = %s""",
-                    (observations[0].observed_at, event["id"]),
-                )
             if merge_ids:
                 await self._connection.execute(
                     """
@@ -206,9 +197,9 @@ class EventStore:
                     await self._connection.execute(
                         """
                         INSERT INTO eventscout.source_records
-                            (event_id, source_id, external_id, occurrence_key, observed_at,
+                            (event_id, source_id, external_id, observed_at,
                              source_updated_at, raw_payload, content)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """,
                         (event["id"], *identity, *metadata),
                     )

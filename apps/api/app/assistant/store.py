@@ -84,8 +84,8 @@ class ConversationStore:
                     (conversation_id,),
                 )
                 cursor = await self._connection.execute(
-                    """INSERT INTO eventscout.turns (conversation_id, request_id, message)
-                       VALUES (%s, gen_random_uuid(), %s) RETURNING id""",
+                    """INSERT INTO eventscout.turns (conversation_id, message)
+                       VALUES (%s, %s) RETURNING id""",
                     (conversation_id, message),
                 )
                 row = await cursor.fetchone()

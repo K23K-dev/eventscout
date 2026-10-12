@@ -122,7 +122,6 @@ class EventContent(_FrozenModel):
 class EventObservation(_FrozenModel):
     source_id: UUID
     external_id: str = Field(min_length=1)
-    occurrence_key: str = ""
     content: EventContent
     observed_at: AwareDatetime
     source_updated_at: AwareDatetime | None = None
