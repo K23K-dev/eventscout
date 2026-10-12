@@ -19,7 +19,7 @@ START ─▶ parse ──clarification──▶ END
         validate ───────────────────┴──────┴─▶ END
 ```
 
-- **parse** (`intent.py`). GPT-5.6 Luna turns the message into a `SearchIntent`: only what this message changes. That covers the query and keywords (including any venue named), a date phrase, region, price, format, and a clarification question for messages that can't become a search, such as greetings. Code then merges the intent into the conversation's `SearchState`. Unmentioned constraints carry over, dates like "this weekend" resolve in code against today in Atlanta, and windows are capped at 90 days. The model never computes dates.
+- **parse** (`intent.py`). GPT-6 Luna turns the message into a `SearchIntent`: only what this message changes. That covers the query and keywords (including any venue named), a date phrase, region, price, format, and a clarification question for messages that can't become a search, such as greetings. Code then merges the intent into the conversation's `SearchState`. Unmentioned constraints carry over, dates like "this weekend" resolve in code against today in Atlanta, and windows are capped at 90 days. The model never computes dates.
 - **retrieve** finds 8 candidates with [hybrid search](../search/README.md), inside a read-only snapshot transaction.
 - **explain** sends the search and the numbered candidates to the model as data. Each candidate carries its title, when, where, format, price, who can attend, publisher, and a description excerpt. The model writes 2–4 sentences citing candidates as `[n]`, and says whether anything matched. When nothing fits, it may also suggest a broader search.
 - **validate** is plain code:

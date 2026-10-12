@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     pinecone_api_key: SecretStr | None = None
     pinecone_index: str = "eventscout"
     # Parses chat messages, writes answers, and summarizes events.
-    openai_model: str = "gpt-5.6-luna"
+    openai_model: str = "gpt-6-luna"
     supabase_url: str | None = None
 
     def missing(self, *names: str) -> list[str]:

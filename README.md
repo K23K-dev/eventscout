@@ -4,7 +4,7 @@ Event discovery for Georgia Tech and Atlanta, built with React, TypeScript, Fast
 
 In development. Browsing, keyword search, AI chat search, and Google sign-in are implemented; deployment is next.
 
-**Ask** (`/ask`) answers requests like "free jazz this weekend" from real listings: GPT-5.6 turns each message into a search, hybrid keyword and vector retrieval finds candidates, and a LangGraph pipeline writes a short answer whose citations are checked against the results. Progress, event cards, and the answer stream to the page as they're ready, and follow-ups such as "only free ones" keep the earlier context. Chatting requires Google sign-in through Supabase, and each account sees only its own conversations; browsing stays open to everyone.
+**Ask** (`/ask`) answers requests like "free jazz this weekend" from real listings: GPT-6 turns each message into a search, hybrid keyword and vector retrieval finds candidates, and a LangGraph pipeline writes a short answer whose citations are checked against the results. Progress, event cards, and the answer stream to the page as they're ready, and follow-ups such as "only free ones" keep the earlier context. Chatting requires Google sign-in through Supabase, and each account sees only its own conversations; browsing stays open to everyone.
 
 ## Design docs
 
