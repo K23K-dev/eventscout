@@ -3,31 +3,28 @@
 import asyncio
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from html import unescape
 from typing import Any
 from urllib.parse import urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from dateutil import parser
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
+    ATLANTA,
     cost_price,
     described_price,
     http_url,
     image_url,
     issue_message,
-    localize,
+    local_time,
     text,
 )
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
-
-_ZONE = ZoneInfo("America/New_York")
 
 
 def _url(value: object, base: str) -> str:
@@ -63,21 +60,21 @@ def _showing_start(showing: Tag) -> datetime | None:
             break
     else:
         parts = (".m-date__month", ".m-date__day", ".m-date__year", ".m-date__hour")
-        value = " ".join(text(showing.select_one(part)) for part in parts)
-    return localize(parser.parse(value), _ZONE).astimezone(UTC)
+        value = " ".join(text(showing, part) for part in parts)
+    return local_time(value)
 
 
 def _parse_detail(html: bytes, url: str, default_venue: str) -> tuple[list[ParsedEvent], list[str]]:
     soup = BeautifulSoup(html, "html.parser")
-    title = text(soup.select_one("h1"))
-    description = text(soup.select_one(".event_description"))
+    title = text(soup, "h1")
+    description = text(soup, ".event_description")
     schema = _event_schema(soup)
     if not description and isinstance(schema.get("description"), str):
         description = text(schema["description"])
     venue = default_venue
     cost = ""
     for item in soup.select("li.item"):
-        label = text(item.select_one(".label"))
+        label = text(item, ".label")
         if label.casefold() == "venue":
             venue = text(item).removeprefix(label).strip() or venue
         elif label.casefold() in {"ticket prices", "ticket price", "price"}:
@@ -124,8 +121,8 @@ def _parse_detail(html: bytes, url: str, default_venue: str) -> tuple[list[Parse
         sports = isinstance(performer, dict) and performer.get("@type") == "SportsTeam"
         events.append(
             ParsedEvent(
-                external_id=f"showing:{identity}",
-                content=EventContent(
+                f"showing:{identity}",
+                EventContent(
                     title=title,
                     description=description,
                     starts_at=starts_at,
@@ -139,14 +136,7 @@ def _parse_detail(html: bytes, url: str, default_venue: str) -> tuple[list[Parse
                     registration_url=HttpUrl(registration) if registration else None,
                     status="cancelled" if cancelled else "scheduled",
                 ),
-                source_updated_at=None,
-                raw_payload={
-                    "showing_id": identity,
-                    "showing_html": str(showing),
-                    "url": url,
-                    "event_schema": schema,
-                    "image_url": image_url(schema.get("image")),
-                },
+                image_url=image_url(schema.get("image")),
             )
         )
     return events, warnings
@@ -169,8 +159,8 @@ async def collect(
     result = SourceCollection()
     parts = urlsplit(calendar_url)
     origin = f"{parts.scheme}://{parts.netloc}"
-    current = window_start.astimezone(_ZONE).replace(day=1)
-    last = window_end.astimezone(_ZONE).replace(day=1)
+    current = window_start.astimezone(ATLANTA).replace(day=1)
+    last = window_end.astimezone(ATLANTA).replace(day=1)
     urls: set[str] = set()
     while (current.year, current.month) <= (last.year, last.month):
         try:
@@ -184,9 +174,9 @@ async def collect(
             for day, markup in data.items() if isinstance(data, dict) else []:
                 published_day = datetime.strptime(day, "%m-%d-%Y").date()
                 if (
-                    not window_start.astimezone(_ZONE).date()
+                    not window_start.astimezone(ATLANTA).date()
                     <= published_day
-                    <= window_end.astimezone(_ZONE).date()
+                    <= window_end.astimezone(ATLANTA).date()
                 ):
                     continue
                 for anchor in BeautifulSoup(markup, "html.parser").select("h3 a[href]"):

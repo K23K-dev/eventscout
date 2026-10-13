@@ -168,7 +168,7 @@ def group_events(observations: list[Observation], catalog: list[CatalogRecord]) 
                     previous.external_id,
                     previous.content,
                     previous.source_updated_at,
-                    {"source_url_is_collection": previous.source_url_is_collection},
+                    source_url_is_collection=previous.source_url_is_collection,
                 ),
             )
         elif previous is not None and _when(item.event.content) != _when(previous.content):
@@ -220,7 +220,7 @@ def group_events(observations: list[Observation], catalog: list[CatalogRecord]) 
         for key in _keys(
             item.publisher,
             item.event.content,
-            item.event.raw_payload.get("source_url_is_collection") is True,
+            item.event.source_url_is_collection,
         ):
             if key in seen:
                 join(index, seen[key])

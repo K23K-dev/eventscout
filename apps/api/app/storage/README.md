@@ -9,7 +9,7 @@ Two levels keep "what each calendar said" apart from "what we show".
 | Table | One row per | Holds |
 | --- | --- | --- |
 | `sources` | calendar | slug, publisher, display name, public URL |
-| `source_records` | calendar listing | that calendar's own normalized content, raw payload, and when it was observed. Unique on `(source_id, external_id)`. |
+| `source_records` | calendar listing | that calendar's own normalized content, a small `raw_payload` with its picture URL and shared-listing flag, and when it was observed. Unique on `(source_id, external_id)`. |
 | `event_occurrences` | real-world event | the canonical content shown to users, `content_hash`, `content_version`, and `merged_into` |
 
 Several source records can point at one occurrence, which is how duplicates across calendars become one event. When two occurrences turn out to be the same event, one is merged into the other:
@@ -35,7 +35,7 @@ Several source records can point at one occurrence, which is how duplicates acro
 2. **Stale checks.** It refuses a stale write: an observation older than the stored one, an older source revision, or different content at the same observation time. The runner reports these as issues and moves on.
 3. **Canonical event.** It inserts or updates the canonical event from the group's primary observation.
 4. **Merges.** It applies any merges the matcher decided on, refusing to merge an event into itself or into one already merged elsewhere.
-5. **Source records.** It upserts each source record with its own content and raw payload.
+5. **Source records.** It upserts each source record with its own content, picture URL and shared-listing flag.
 
 Two triggers finish the job inside the same transaction:
 

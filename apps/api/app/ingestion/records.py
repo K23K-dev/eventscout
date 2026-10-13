@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from pydantic import JsonValue
-
 from app.storage.models import EventContent
 
 
@@ -13,8 +11,11 @@ from app.storage.models import EventContent
 class ParsedEvent:
     external_id: str
     content: EventContent
-    source_updated_at: datetime | None
-    raw_payload: dict[str, JsonValue]
+    # The publisher's own revision time, when the feed has one.
+    source_updated_at: datetime | None = None
+    image_url: str | None = None
+    # The source URL is a listing page shared by many events, so matching can't key on it.
+    source_url_is_collection: bool = False
 
 
 @dataclass(frozen=True)

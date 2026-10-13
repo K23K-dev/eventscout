@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -14,16 +13,16 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
+    ATLANTA,
     MEMBERS_ONLY,
     cost_price,
     location_kind,
     publisher_url,
+    text,
 )
-from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
-_TIMEZONE = ZoneInfo("America/New_York")
 _ADMINISTRATIVE = re.compile(
     r"\b(?:chamber|office) closed\b|\bstaff meeting\b|^\W*specials\W|"
     r"\b(?:sponsorship opportunities|sponsorship registration|advertising opportunities)\b",
@@ -52,7 +51,7 @@ def _listing(html: bytes, base: str) -> tuple[list[_Listing], list[ParseIssue]]:
             identity = re.search(r"-(\d+)$", urlsplit(url).path)
             if identity is None:
                 raise ValueError("Event is missing its stable ChamberMaster identity")
-            items[identity[1]] = _Listing(identity[1], url, _text(link))
+            items[identity[1]] = _Listing(identity[1], url, text(link))
         except ValueError as exc:
             issues.append(ParseIssue(None, str(exc)))
     return list(items.values()), issues
@@ -77,7 +76,7 @@ def _detail(html: bytes) -> tuple[Tag, str | None]:
     if event is None:
         raise ValueError("Public event detail structure is missing")
     # Date-only activities need the advertised export's VALUE=DATE semantics.
-    time_label = _text(event.select_one(".gz-details-time"))
+    time_label = text(event, ".gz-details-time")
     ical = None
     if not re.search(r"\d{1,2}:\d{2}\s*[AP]M", time_label, re.I):
         for link in soup.select('a[href*="/events/addtocalendar/"]'):
@@ -90,9 +89,7 @@ def _detail(html: bytes) -> tuple[Tag, str | None]:
     return event, ical
 
 
-def _parse(
-    item: _Listing, event: Tag, *, calendar_url: str, publisher: str, ical: bytes | None
-) -> ParsedEvent | None:
+def _parse(item: _Listing, event: Tag, *, publisher: str, ical: bytes | None) -> ParsedEvent | None:
     title = _content(event, 'meta[itemprop="name"]') or item.title
     if _ADMINISTRATIVE.search(title):
         return None
@@ -130,15 +127,14 @@ def _parse(
                 ends_at = end.astimezone(UTC) if end != start else None
         else:
             raise ValueError("Invalid date in event export")
-    description_node = event.select_one(".gz-event-description")
-    description = _text(description_node)
-    venue = _text(event.select_one('[itemprop="location"] [itemprop="name"]'))
+    description = text(event, ".gz-event-description")
+    venue = text(event, '[itemprop="location"] [itemprop="name"]')
     kind = location_kind(venue)
     if kind == "in_person" and re.search(
         r"\bWashington\s*,?\s+D\.?\s*C\.?\b|\bDistrict of Columbia\b", venue, re.I
     ):
         return None
-    fees = _text(event.select_one(".gz-event-fees .gz-event-fees"))
+    fees = text(event, ".gz-event-fees .gz-event-fees")
     price, price_details = cost_price(fees)
     audience = []
     if MEMBERS_ONLY.search(f"{title} {description} {fees}"):
@@ -162,8 +158,8 @@ def _parse(
         "http://schema.org/EventCancelled",
     }
     return ParsedEvent(
-        external_id=item.external_id,
-        content=EventContent(
+        item.external_id,
+        EventContent(
             title=title,
             description=description,
             starts_at=starts_at,
@@ -180,19 +176,6 @@ def _parse(
             source_url=HttpUrl(item.url),
             registration_url=HttpUrl(registration) if registration else None,
         ),
-        source_updated_at=None,
-        raw_payload={
-            "chambermaster_id": item.external_id,
-            "title": title,
-            "start": _content(event, '[itemprop="startDate"]'),
-            "end": raw_end,
-            "venue": venue,
-            "fees": fees,
-            "description_html": str(description_node) if description_node else None,
-            "status": status,
-            "registration_url": registration,
-            "icalendar": ical.decode("utf-8-sig") if ical else None,
-        },
     )
 
 
@@ -206,8 +189,8 @@ async def collect(
 ) -> SourceCollection:
     result = SourceCollection()
     listings: dict[str, _Listing] = {}
-    month = window_start.astimezone(_TIMEZONE).date().replace(day=1)
-    last = window_end.astimezone(_TIMEZONE).date().replace(day=1)
+    month = window_start.astimezone(ATLANTA).date().replace(day=1)
+    last = window_end.astimezone(ATLANTA).date().replace(day=1)
     while month <= last:
         url = f"{calendar_url.rstrip('/')}/{month.isoformat()}"
         try:
@@ -244,7 +227,7 @@ async def collect(
                 if not urlsplit(allowed).path.endswith(f"-{item.external_id}"):
                     raise ValueError("Calendar export does not match the event identity")
                 ical = await fetch(allowed + "?format=ICal")
-            return _parse(item, event, calendar_url=calendar_url, publisher=publisher, ical=ical)
+            return _parse(item, event, publisher=publisher, ical=ical)
         except (httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:
             return ParseIssue(
                 item.external_id, f"Event detail failed ({type(exc).__name__}: {exc})"

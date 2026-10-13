@@ -3,31 +3,18 @@
 import re
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from dateutil import parser
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import localize, location_kind
+from app.ingestion.parsing import ATLANTA, local_time, location_kind, text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
-EASTERN = ZoneInfo("America/New_York")
 TREES_URL = "https://www.treesatlanta.org/get-involved/events/"
 SOUTH_FORK_URL = "https://southforkconservancy.org/events"
-
-
-def _text(parent: Tag, selector: str) -> str:
-    element = parent.select_one(selector)
-    return element.get_text(" ", strip=True) if element else ""
-
-
-def _local_time(year: int, date_text: str, clock: str) -> datetime:
-    # The requested month supplies the year that the publisher omits in its cards.
-    return localize(parser.parse(f"{date_text} {year} {clock}"), EASTERN)
 
 
 def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
@@ -38,7 +25,7 @@ def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
     identity = re.search(r"-([a-zA-Z0-9]{18})/?$", urlsplit(url).path)
     if urlsplit(url).hostname != "www.treesatlanta.org" or identity is None:
         raise ValueError("Unrecognized Trees Atlanta event identity")
-    parts = _text(card, ".time-place").split("|")
+    parts = text(card, ".time-place").split("|")
     if len(parts) not in (2, 3):
         raise ValueError("Unrecognized event date and venue")
     date_text, time_text = (part.strip() for part in parts[:2])
@@ -48,8 +35,9 @@ def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
     )
     if times is None:
         raise ValueError("Missing explicit start time")
-    begins = _local_time(year, date_text, times[1])
-    finishes = _local_time(year, date_text, times[2]) if times[2] else None
+    # The requested month supplies the year that the publisher omits in its cards.
+    begins = local_time(f"{date_text} {year} {times[1]}")
+    finishes = local_time(f"{date_text} {year} {times[2]}") if times[2] else None
     if begins.month != month:
         raise ValueError("Calendar ignored its month filter")
     tags = [
@@ -57,10 +45,9 @@ def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
         for name in ("education", "volunteer", "community")
         if card.select_one(f".circle.{name}") is not None
     ]
-    title = _text(card, "h3")
     content = EventContent(
-        title=title,
-        description=_text(card, "p"),
+        title=text(card, "h3"),
+        description=text(card, "p"),
         starts_at=begins,
         ends_at=finishes,
         venue=venue,
@@ -68,16 +55,7 @@ def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
         tags=tags,
         source_url=HttpUrl(url),
     )
-    return ParsedEvent(
-        identity[1],
-        content,
-        None,
-        {
-            "date_label": date_text,
-            "time_label": time_text,
-            "description_is_excerpt": True,
-        },
-    )
+    return ParsedEvent(identity[1], content)
 
 
 async def collect_trees(
@@ -85,8 +63,8 @@ async def collect_trees(
 ) -> SourceCollection:
     """Fetch the calendar's visible month filters; each returns that month's full list."""
     result = SourceCollection()
-    current = window_start.astimezone(EASTERN).replace(day=1)
-    last = window_end.astimezone(EASTERN)
+    current = window_start.astimezone(ATLANTA).replace(day=1)
+    last = window_end.astimezone(ATLANTA)
     while (current.year, current.month) <= (last.year, last.month):
         feed_url = f"{TREES_URL}?month={current:%Y%m}"
         document = BeautifulSoup(await fetch_bytes(client, feed_url), "html.parser")
@@ -96,10 +74,9 @@ async def collect_trees(
             result.issues.append(ParseIssue(None, "Monthly calendar unexpectedly paginated"))
         for card in cards:
             try:
-                if "online store closes" in _text(card, "h3").casefold():
+                if "online store closes" in text(card, "h3").casefold():
                     continue
-                event = _tree_event(card, current.year, current.month)
-                result.events.append(event)
+                result.events.append(_tree_event(card, current.year, current.month))
             except ValueError as exc:
                 result.issues.append(ParseIssue(None, str(exc)))
         current = current.replace(
@@ -129,13 +106,12 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
     address = card.select_one(".eventlist-meta-address")
     if address is not None:
         label = " ".join(
-            str(text).strip() for text in address.find_all(string=True, recursive=False)
+            str(string).strip() for string in address.find_all(string=True, recursive=False)
         )
         venue = ", ".join(part for part in (label.strip(), venue) if part)
-    title = anchor.get_text(" ", strip=True)
     content = EventContent(
-        title=title,
-        description=_text(card, ".eventlist-excerpt"),
+        title=text(anchor),
+        description=text(card, ".eventlist-excerpt"),
         starts_at=begins,
         ends_at=finishes if finishes > begins else None,
         venue=venue,
@@ -143,12 +119,7 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
         tags=["outdoors", "community"],
         source_url=HttpUrl(url),
     )
-    return ParsedEvent(
-        urlsplit(url).path,
-        content,
-        None,
-        {"calendar_dates": query["dates"][0]},
-    )
+    return ParsedEvent(urlsplit(url).path, content)
 
 
 async def collect_south_fork(
@@ -159,8 +130,7 @@ async def collect_south_fork(
     result = SourceCollection(records_seen=len(cards))
     for card in cards:
         try:
-            event = _south_fork_event(card)
-            result.events.append(event)
+            result.events.append(_south_fork_event(card))
         except ValueError as exc:
             result.issues.append(ParseIssue(None, str(exc)))
     return result

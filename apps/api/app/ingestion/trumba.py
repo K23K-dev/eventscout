@@ -5,7 +5,6 @@ import re
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from html import unescape
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -13,21 +12,21 @@ from pydantic import BaseModel, Field, HttpUrl, JsonValue, TypeAdapter, Validati
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
+    ATLANTA,
     LocationKind,
     PriceStatus,
     cost_price,
     described_price,
     http_url,
     image_url,
+    text,
     validation_message,
 )
-from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 FEED_URL = "https://www.trumba.com/calendars/emory-events.json"
 _CALENDAR_URL = "https://www.trumba.com/calendars/emory-events"
-_TIMEZONE = ZoneInfo("America/New_York")
 # The published-events OpenAPI documents events=1..1000. Emory's default is only 200.
 _PAGE_LIMIT = 1000
 _JSON_EVENTS = TypeAdapter(list[dict[str, JsonValue]])
@@ -74,7 +73,7 @@ def _timestamp(value: str, offset: str) -> datetime:
     aware = datetime.fromisoformat(value + offset)
     # The JSON uses local wall time, verified against Emory's ICS feed. Validate
     # the supplied offset independently, including both sides of DST changes.
-    if aware.astimezone(_TIMEZONE).replace(tzinfo=None) != parsed:
+    if aware.astimezone(ATLANTA).replace(tzinfo=None) != parsed:
         raise ValueError("Event UTC offset does not match the Emory calendar timezone")
     return aware.astimezone(UTC)
 
@@ -97,41 +96,41 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
         if label in fields and fields[label] != field.value:
             raise ValueError(f"Conflicting custom field: {field.label}")
         fields[label] = field.value
-    description = _text(event.description)
+    description = text(event.description)
     begins = _timestamp(event.startDateTime, event.startTimeZoneOffset)
     finishes = _timestamp(event.endDateTime, event.endTimeZoneOffset)
     start_date = end_date = None
     if event.allDay:
-        local_start, local_end = begins.astimezone(_TIMEZONE), finishes.astimezone(_TIMEZONE)
+        local_start, local_end = begins.astimezone(ATLANTA), finishes.astimezone(ATLANTA)
         if local_start.time() != time.min or local_end.time() != time.min or finishes == begins:
             raise ValueError("All-day events need distinct midnight date boundaries")
         # Trumba's JSON end matches the exclusive DTEND;VALUE=DATE in its ICS feed.
         start_date, end_date = local_start.date(), local_end.date()
     registration = event.signUpUrl or fields.get("registration / r.s.v.p. link", "")
     price_status, price_details = _price(
-        _text(fields.get("cost", "")), event.requiresPayment, description
+        text(fields.get("cost", "")), event.requiresPayment, description
     )
     audience = [
         label.strip()
         for key in ("event open to", "intended audience")
-        for label in _text(fields.get(key, "")).split(",")
+        for label in text(fields.get(key, "")).split(",")
         if label.strip()
     ]
     tags = [
         label.strip()
         for key in ("university event topic", "event type", "economics event type", "type of art")
-        for label in _text(fields.get(key, "")).split(",")
+        for label in text(fields.get(key, "")).split(",")
         if label.strip()
     ]
     content = EventContent(
-        title=_text(event.title),
+        title=text(event.title),
         description=description,
         starts_at=None if event.allDay else begins,
         ends_at=None if event.allDay or finishes == begins else finishes,
         all_day=event.allDay,
         start_date=start_date,
         end_date=end_date,
-        venue=_text(event.location) or None,
+        venue=text(event.location) or None,
         location_kind=_LOCATION_TYPES.get(event.locationType, "unknown"),
         price_status=price_status,
         price_details=price_details,
@@ -143,13 +142,9 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
     )
     return ParsedEvent(
         # Repeating occurrences have individual eventIDs; seriesID groups them.
-        external_id=str(event.eventID),
-        content=content,
-        source_updated_at=None,
-        raw_payload={
-            "event": raw,
-            "image_url": image_url(raw.get("detailImage") or raw.get("eventImage")),
-        },
+        str(event.eventID),
+        content,
+        image_url=image_url(raw.get("detailImage") or raw.get("eventImage")),
     )
 
 
@@ -176,9 +171,9 @@ async def collect(
     A saturated day or failed request is explicitly incomplete. The caller merges
     overlapping ongoing events by eventID and applies the precise time window.
     """
-    local_end = window_end.astimezone(_TIMEZONE)
+    local_end = window_end.astimezone(ATLANTA)
     finish = local_end.date() + timedelta(days=int(local_end.time() != time.min))
-    cursor = window_start.astimezone(_TIMEZONE).date()
+    cursor = window_start.astimezone(ATLANTA).date()
     slices: list[tuple[date, int]] = []
     while cursor < finish:
         days = min(7, (finish - cursor).days)

@@ -48,11 +48,12 @@ Every adapter returns a `SourceCollection` (`records.py`): parsed events, record
 - a stable `external_id`, never the date
 - normalized `EventContent`
 - the source's own revision time, when it publishes one
-- the raw payload, kept for provenance (including any picture URL)
+- the picture URL, when the calendar publishes one
+- whether its source URL is a listing page shared by many events, which matching then can't treat as the event's identity
 
 Shared code:
 - `http.py` bounds every download to 60 seconds and 20 MiB.
-- `parsing.py` holds the cross-publisher rules: visible text, online/in-person detection, free/paid wording, registration links, and safe localization of wall-clock times. `localize` refuses nonexistent or ambiguous DST times.
+- `parsing.py` holds the cross-publisher rules: visible text, online/in-person detection, free/paid wording, registration links, and Atlanta wall-clock times. Every calendar publishes local times, so `ATLANTA` is the one timezone, and `localize` refuses nonexistent or ambiguous DST times.
 - `icalendar_feed.py` reads iCalendar exports for the iCal-based adapters.
 
 ## Parsing policy

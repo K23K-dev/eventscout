@@ -303,19 +303,7 @@ def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
         source_url=source_url,
         registration_url=_registration_url(soup, str(source_url), description),
     )
-    return ParsedEvent(
-        external_id=external_id,
-        content=content,
-        source_updated_at=source_updated_at,
-        raw_payload={
-            "guid": external_id,
-            "title": item.findtext("title", ""),
-            "link": item.findtext("link", ""),
-            "description_html": html,
-            "pub_date": item.findtext("pubDate"),
-            "mercury_id": _leading_text(sections.get("Mercury ID", "")) or None,
-        },
-    )
+    return ParsedEvent(external_id, content, source_updated_at)
 
 
 def parse_feed(xml: bytes) -> SourceCollection:

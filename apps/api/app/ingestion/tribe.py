@@ -15,18 +15,18 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
+    ATLANTA,
     MEMBERS_ONLY,
     cost_price,
     image_url,
     issue_message,
     location_kind,
     registration_link,
+    text,
 )
-from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
-_LOCAL_ZONE = ZoneInfo("America/New_York")
 _ARTSATL_WEEKLY_SERIES = {
     "uptown-market-atlanta-2": (r"\bevery Saturday\b", 5, 11),
     "live-music-in-the-beer-garden-oktoberfest-music-series": (r"\bevery Friday\b", 4, 19),
@@ -66,8 +66,8 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
     source_url = _url(event.get("url"), base_url)
     if source_url is None:
         raise ValueError("Missing event detail URL")
-    title = _text(event.get("title"))
-    description = _text(event.get("description"))
+    title = text(event.get("title"))
+    description = text(event.get("description"))
     all_day = event.get("all_day") is True
     zone = str(event.get("timezone", "America/New_York"))
     try:
@@ -77,7 +77,6 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         zone = "America/New_York"
     starts_at = ends_at = None
     start_date = end_date = None
-    ignored_end_reason = None
     if all_day:
         start_date = datetime.fromisoformat(str(event.get("start_date"))).date()
         # Tribe publishes all-day end dates inclusively, at 23:59:59.
@@ -102,9 +101,6 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
             # These verified weekly series inherit their whole run's duration.
             # Dated URLs and an explicit weekly cadence establish separate
             # visits, but conflicting published clocks do not justify an end.
-            ignored_end_reason = (
-                "Weekly occurrence has a conflicting multi-week published end; end time is unknown."
-            )
             ends_at = None
     venues = event.get("venue")
     venue = venues if isinstance(venues, dict) else {}
@@ -112,7 +108,7 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         dict.fromkeys(
             value
             for field in ("venue", "address", "city", "state", "zip")
-            if (value := _text(venue.get(field)))
+            if (value := text(venue.get(field)))
         )
     )
     registration = registration_link(
@@ -130,12 +126,12 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         and (site := _url(website, str(source_url)))
     ):
         registration = str(site)
-    price_status, price_details = cost_price(_text(event.get("cost")))
+    price_status, price_details = cost_price(text(event.get("cost")))
     tags = [
         label
         for field in ("categories", "tags")
         for item in event.get(field, [])
-        if isinstance(item, dict) and (label := _text(item.get("name")))
+        if isinstance(item, dict) and (label := text(item.get("name")))
     ]
     audience = ["Members only"] if MEMBERS_ONLY.search(title) else []
     modified = event.get("modified_utc")
@@ -163,10 +159,8 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
     # WordPress publishes several sizes; the 768px one suits event cards.
     image = event.get("image")
     sizes = image.get("sizes", {}) if isinstance(image, dict) else {}
-    raw_payload = {**event, "image_url": image_url(sizes.get("medium_large") or image)}
-    if ignored_end_reason is not None:
-        raw_payload["ignored_end_reason"] = ignored_end_reason
-    return ParsedEvent(str(identity), content, revision, raw_payload)
+    picture = image_url(sizes.get("medium_large") or image)
+    return ParsedEvent(str(identity), content, revision, image_url=picture)
 
 
 async def collect(
@@ -186,13 +180,12 @@ async def collect(
     result = SourceCollection()
     seen: set[str] = set()
     skipped = 0
-    corrected_ends = 0
     excluded_series: dict[str, int] = {}
     params = {
         "per_page": "50",
         "status": "publish",
-        "starts_before": window_end.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d %H:%M:%S"),
-        "ends_after": window_start.astimezone(_LOCAL_ZONE).strftime("%Y-%m-%d %H:%M:%S"),
+        "starts_before": window_end.astimezone(ATLANTA).strftime("%Y-%m-%d %H:%M:%S"),
+        "ends_after": window_start.astimezone(ATLANTA).strftime("%Y-%m-%d %H:%M:%S"),
         "strict_dates": "true",
     }
     for page in range(1, 101):
@@ -229,18 +222,16 @@ async def collect(
                 excluded_series[slug] = excluded_series.get(slug, 0) + 1
                 continue
             venue = item.get("venue")
-            city = _text(venue.get("city")).casefold() if isinstance(venue, dict) else ""
-            text = _text(item.get("description"))
+            city = text(venue.get("city")).casefold() if isinstance(venue, dict) else ""
+            description = text(item.get("description"))
             evergreen = re.search(
                 r"\bself[ -]guided\b", str(item.get("title", "")), re.I
-            ) and re.search(r"\b(?:any day|any time|at your own pace)\b", text, re.I)
+            ) and re.search(r"\b(?:any day|any time|at your own pace)\b", description, re.I)
             if city in excluded_cities or evergreen:
                 skipped += 1
                 continue
             try:
-                event = _parse(item, api_url)
-                corrected_ends += "ignored_end_reason" in event.raw_payload
-                result.events.append(event)
+                result.events.append(_parse(item, api_url))
             except (ValueError, TypeError) as exc:
                 result.issues.append(ParseIssue(identity, issue_message(exc)))
         if page >= pages:
@@ -250,11 +241,6 @@ async def collect(
     if skipped:
         result.warnings.append(
             f"Excluded {skipped} out-of-area or unscheduled attraction listings."
-        )
-    if corrected_ends:
-        result.warnings.append(
-            f"Kept {corrected_ends} weekly occurrence end times unknown because the "
-            "publisher supplied conflicting multi-week ends; originals remain in metadata."
         )
     for slug, count in sorted(excluded_series.items()):
         result.warnings.append(

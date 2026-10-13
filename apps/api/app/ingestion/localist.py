@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from icalendar import Event
-from pydantic import HttpUrl, JsonValue
+from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.icalendar_feed import (
@@ -71,14 +71,11 @@ def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
     updated = calendar_date(event, "LAST-MODIFIED")
     if updated is not None and not isinstance(updated, datetime):
         raise ValueError("LAST-MODIFIED must be a timestamp")
-    title = calendar_text(event, "SUMMARY")
-    description = calendar_text(event, "DESCRIPTION")
     venue = calendar_text(event, "LOCATION")
-    tags = calendar_categories(event)
     status = calendar_text(event, "STATUS").upper()
     content = EventContent(
-        title=title,
-        description=description,
+        title=calendar_text(event, "SUMMARY"),
+        description=calendar_text(event, "DESCRIPTION"),
         starts_at=starts if isinstance(starts, datetime) else None,
         ends_at=ends if isinstance(ends, datetime) else None,
         all_day=all_day,
@@ -88,29 +85,12 @@ def _parse_event(event: Event, publisher_host: str) -> ParsedEvent:
         else None,
         venue=venue or None,
         location_kind=location_kind(venue),
-        tags=tags,
+        tags=calendar_categories(event),
         source_url=HttpUrl(url),
         status="cancelled" if status == "CANCELLED" else "scheduled",
     )
-    raw_tags: list[JsonValue] = list(tags)
-    return ParsedEvent(
-        external_id=external_id,
-        content=content,
-        # DTSTAMP is export-generation time here; it is not a source content revision.
-        source_updated_at=updated,
-        raw_payload={
-            "uid": external_id,
-            "summary": title,
-            "description": description,
-            "location": venue,
-            "url": url,
-            "status": status,
-            "categories": raw_tags,
-            "dtstart": starts.isoformat(),
-            "dtend": ends.isoformat() if ends else None,
-            "last_modified": updated.isoformat() if updated else None,
-        },
-    )
+    # DTSTAMP is export-generation time here; it is not a source content revision.
+    return ParsedEvent(external_id, content, updated)
 
 
 def parse_feed(data: bytes, publisher_host: str) -> tuple[SourceCollection, int]:

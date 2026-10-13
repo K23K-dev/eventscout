@@ -4,24 +4,18 @@ import asyncio
 import re
 from datetime import datetime
 from urllib.parse import urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import image_url, localize, text
+from app.ingestion.parsing import ATLANTA, image_url, localize, text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 CALENDAR_URL = "https://puppet.org/calendar"
-_ZONE = ZoneInfo("America/New_York")
 _ACTIVITIES = {"Puppet Shows", "Special Events", "Workshops & Classes"}
-
-
-def _text(parent: Tag, selector: str) -> str:
-    return text(parent.select_one(selector))
 
 
 def _link(card: Tag, selector: str) -> str:
@@ -43,36 +37,25 @@ def _performance(card: Tag) -> ParsedEvent:
     if match is None:
         raise ValueError("Missing stable published booking identity")
     program = _link(card, "a.calendar-event-popover__secondary[href]")
-    title = _text(card, "h3")
-    published_time = _text(card, ".calendar-event-popover__date")
-    local = localize(datetime.strptime(published_time, "%A, %B %d, %Y at %I:%M %p"), _ZONE)
-    summary = _text(card, ".calendar-event-popover__summary")
-    category = _text(card, ".calendar-event-popover__type")
+    published = text(card, ".calendar-event-popover__date")
+    summary = text(card, ".calendar-event-popover__summary")
+    picture = card.select_one("img")
     return ParsedEvent(
-        external_id=match[1],
-        content=EventContent(
-            title=title,
+        match[1],
+        EventContent(
+            title=text(card, "h3"),
             description=f"Program dates: {summary}" if summary else "",
             # The calendar provides start times, not individual performance ends.
-            starts_at=local,
+            starts_at=localize(datetime.strptime(published, "%A, %B %d, %Y at %I:%M %p")),
             venue="Center for Puppetry Arts, 1404 Spring Street NW, Atlanta, GA 30309",
             location_kind="in_person",
-            tags=[category],
+            tags=[text(card, ".calendar-event-popover__type")],
             source_url=HttpUrl(program),
             registration_url=HttpUrl(booking),
         ),
-        source_updated_at=None,
-        raw_payload={
-            "performance_id": match[1],
-            "published_time": published_time,
-            "program_dates": summary,
-            "program_type": category,
-            "performance_html": str(card),
-            "source_url_is_collection": True,
-            "image_url": image_url(
-                picture.get("src") if (picture := card.select_one("img")) else None, CALENDAR_URL
-            ),
-        },
+        image_url=image_url(picture.get("src") if picture else None, CALENDAR_URL),
+        # A program page lists every performance of its show.
+        source_url_is_collection=True,
     )
 
 
@@ -85,7 +68,7 @@ def _month(html: bytes, month: datetime) -> SourceCollection:
         raise ValueError("Month calendar exceeds the 2500-card limit")
     result = SourceCollection(records_seen=len(cards))
     for card in cards:
-        category = _text(card, ".calendar-event-popover__type")
+        category = text(card, ".calendar-event-popover__type")
         # Daily museum/exhibition admission is an opening schedule, not a
         # separately scheduled performance or workshop.
         if category not in _ACTIVITIES:
@@ -93,7 +76,7 @@ def _month(html: bytes, month: datetime) -> SourceCollection:
         try:
             result.events.append(_performance(card))
         except (ValueError, TypeError) as exc:
-            result.issues.append(ParseIssue(_text(card, "h3") or None, str(exc)))
+            result.issues.append(ParseIssue(text(card, "h3") or None, str(exc)))
     return result
 
 
@@ -102,8 +85,8 @@ async def collect(
 ) -> SourceCollection:
     """Read each public month once, respecting the publisher's 30-second delay."""
     result = SourceCollection()
-    current = window_start.astimezone(_ZONE).replace(day=1)
-    last = window_end.astimezone(_ZONE).replace(day=1)
+    current = window_start.astimezone(ATLANTA).replace(day=1)
+    last = window_end.astimezone(ATLANTA).replace(day=1)
     if (last.year - current.year) * 12 + last.month - current.month > 3:
         raise ValueError("Puppetry calendar collection is limited to a 90-day window")
     events: dict[str, ParsedEvent] = {}

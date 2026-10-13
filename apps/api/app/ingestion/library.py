@@ -2,9 +2,8 @@
 
 import asyncio
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -16,7 +15,7 @@ from app.ingestion.parsing import (
     described_price,
     http_url,
     issue_message,
-    localize,
+    local_time,
     location_kind,
     text,
 )
@@ -24,15 +23,7 @@ from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 LISTING_URL = "https://library.gatech.edu/events-workshops"
-_TIMEZONE = ZoneInfo("America/New_York")
 _MAX_PAGES = 50
-
-
-def _text(parent: Tag | BeautifulSoup, selector: str) -> str:
-    matches = parent.select(selector)
-    if len(matches) > 1:
-        raise ValueError(f"Expected one {selector} field")
-    return " ".join(matches[0].get_text(" ", strip=True).split()) if matches else ""
 
 
 def _url(value: str, *, library_only: bool = False) -> str:
@@ -49,23 +40,18 @@ def _href(tag: Tag | None) -> str:
     return value
 
 
-def _local_time(day: str, clock: str) -> datetime:
-    return localize(parser.parse(f"{day} {clock}"), _TIMEZONE).astimezone(UTC)
-
-
 def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
     soup = BeautifulSoup(html, "html.parser")
     shortlink = _url(_href(soup.select_one('link[rel="shortlink"]')), library_only=True)
-    match = re.fullmatch(r"/node/(\d+)", urlsplit(shortlink).path)
-    if match is None:
+    node = re.fullmatch(r"/node/(\d+)", urlsplit(shortlink).path)
+    if node is None:
         raise ValueError("Missing stable Drupal node ID")
-    node_id = match.group(1)
     detail = soup.select_one("main .node-detail")
     if detail is None:
         raise ValueError("Missing Library event details")
-    title = _text(detail, "h1")
-    day = " ".join(_text(detail, f".node-detail__{part}") for part in ("day", "month", "year"))
-    clock = _text(detail, ".hours-of-operation")
+    title = text(detail, "h1")
+    day = " ".join(text(detail, f".node-detail__{part}") for part in ("day", "month", "year"))
+    clock = text(detail, ".hours-of-operation")
     # Library pages publish campus-local wall times, without a UTC offset.
     all_day = bool(re.fullmatch(r"all[ -]day", clock, re.I))
     start_date = parser.parse(day).date() if all_day else None
@@ -74,18 +60,15 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
         clocks = re.split(r"\s*[-–—]\s*", clock)
         if len(clocks) not in {1, 2}:
             raise ValueError("Expected one start time and an optional end time")
-        starts_at = _local_time(day, clocks[0])
-        ends_at = _local_time(day, clocks[1]) if len(clocks) == 2 else None
-    body = detail.select_one(".node-detail__content-body")
-    body_html = str(body) if body else ""
-    description = text(body)
-    detail_venue = _text(detail, ".taxonomy-box.location")
+        starts_at = local_time(f"{day} {clocks[0]}")
+        ends_at = local_time(f"{day} {clocks[1]}") if len(clocks) == 2 else None
+    description = text(detail, ".node-detail__content-body")
+    detail_venue = text(detail, ".taxonomy-box.location")
     venue = listing_venue or detail_venue
     if venue.casefold() == "in person":
         venue = ""
     register = detail.select_one("a.register-button")
-    registration_url = _url(_href(register)) if register is not None else None
-    category = _text(detail, ".node-detail__category")
+    category = text(detail, ".node-detail__category")
     price_status, price_details = described_price(description)
     content = EventContent(
         title=title,
@@ -102,27 +85,9 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
         price_details=price_details,
         tags=[category] if category else [],
         source_url=HttpUrl(url),
-        registration_url=HttpUrl(registration_url) if registration_url else None,
+        registration_url=HttpUrl(_url(_href(register))) if register is not None else None,
     )
-    return ParsedEvent(
-        external_id=f"node:{node_id}",
-        content=content,
-        source_updated_at=None,
-        raw_payload={
-            "node_id": node_id,
-            "shortlink": shortlink,
-            "url": url,
-            "title": title,
-            "date": day,
-            "time": clock,
-            "timezone": "America/New_York",
-            "listing_venue": listing_venue,
-            "detail_venue": detail_venue,
-            "description_html": body_html,
-            "registration_url": registration_url,
-            "category": category,
-        },
-    )
+    return ParsedEvent(f"node:{node[1]}", content)
 
 
 async def collect(
@@ -152,7 +117,7 @@ async def collect(
                 url = _url(_href(card), library_only=True)
                 if not urlsplit(url).path.startswith("/events/"):
                     raise ValueError("Unexpected Library event detail path")
-                listings.setdefault(url, _text(card, ".event-card__class_type"))
+                listings.setdefault(url, text(card, ".event-card__class_type"))
             next_links = {
                 _url(_href(tag), library_only=True)
                 for tag in soup.select('.public-programming-listing--view a[rel="next"]')

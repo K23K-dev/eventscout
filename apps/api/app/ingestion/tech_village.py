@@ -4,30 +4,28 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from html import unescape
 from urllib.parse import unquote, urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup
-from dateutil import parser
 from pydantic import HttpUrl, ValidationError
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
+    ATLANTA,
     MEMBERS_ONLY,
     described_price,
     http_url,
-    localize,
+    local_time,
     location_kind,
+    text,
 )
-from app.ingestion.parsing import text as _text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
 LISTING_URL = "https://atlantatechvillage.com/events"
-_TIMEZONE = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True)
@@ -68,7 +66,7 @@ def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]
             external_id = identities.pop()
             if not re.fullmatch(r"[a-f0-9]{24}", external_id):
                 raise ValueError("Invalid Webflow item identity")
-            day = datetime.strptime(_text(card.select_one(".event-date-2")), "%B %d, %Y").date()
+            day = datetime.strptime(text(card, ".event-date-2"), "%B %d, %Y").date()
             events.append(_Listing(external_id, _url(str(link["href"]), internal=True), day))
         except (ValueError, TypeError, KeyError) as exc:
             issues.append(ParseIssue(external_id, str(exc)))
@@ -76,38 +74,31 @@ def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]
     return events, issues, _url(str(next_link["href"]), internal=True) if next_link else None
 
 
-def _local_time(day: str, clock: str) -> datetime:
-    return localize(parser.parse(f"{day} {clock}"), _TIMEZONE).astimezone(UTC)
-
-
 def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
     soup = BeautifulSoup(html, "html.parser")
-    title = _text(soup.select_one("h1.event-title"))
+    title = text(soup, "h1.event-title")
     fields = {
-        _text(group.select_one(".detail-heading")).casefold(): group
+        text(group, ".detail-heading").casefold(): group
         for group in soup.select(".event-details-group")
     }
     when = fields.get("when")
     if not title or when is None:
         raise ValueError("Event title or WHEN section is missing")
-    day = _text(when.select_one(".text-weight-light"))
-    clocks = re.findall(r"\b\d{1,2}:\d{2}\s*[AP]M\b", _text(when.select_one(".time-group")))
+    day = text(when, ".text-weight-light")
+    clocks = re.findall(r"\b\d{1,2}:\d{2}\s*[AP]M\b", text(when, ".time-group"))
     if len(clocks) not in {1, 2}:
         raise ValueError("Expected one or two explicit event times")
-    starts_at = _local_time(day, clocks[0])
-    ends_at = _local_time(day, clocks[1]) if len(clocks) == 2 else None
+    starts_at = local_time(f"{day} {clocks[0]}")
+    ends_at = local_time(f"{day} {clocks[1]}") if len(clocks) == 2 else None
     if ends_at == starts_at:
         ends_at = None
-    where = fields.get("where")
-    venue_node = where.select_one(".w-richtext") if where else None
-    venue = _text(venue_node)
-    description_node = soup.select_one(".text-rich-text.w-richtext")
-    description = _text(description_node)
+    venue = text(fields.get("where"), ".w-richtext")
+    description = text(soup, ".text-rich-text.w-richtext")
     registration = next(
         (
             _url(href)
             for link in soup.select(".event-links a[href]")
-            if _text(link).casefold() in {"rsvp here", "register", "register here"}
+            if text(link).casefold() in {"rsvp here", "register", "register here"}
             and isinstance(href := link.get("href"), str)
         ),
         None,
@@ -127,20 +118,7 @@ def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
         source_url=HttpUrl(listing.url),
         registration_url=HttpUrl(registration) if registration else None,
     )
-    return ParsedEvent(
-        external_id=listing.external_id,
-        content=content,
-        source_updated_at=None,
-        raw_payload={
-            "cms_item_id": listing.external_id,
-            "url": listing.url,
-            "listing_date": str(listing.day),
-            "when": _text(when),
-            "venue_html": str(venue_node) if venue_node else None,
-            "description_html": str(description_node) if description_node else None,
-            "registration_url": registration,
-        },
-    )
+    return ParsedEvent(listing.external_id, content)
 
 
 async def collect(
@@ -168,8 +146,8 @@ async def collect(
         if url is not None:
             await asyncio.sleep(0.5)
     result.records_seen = len(listings)
-    start_day = window_start.astimezone(_TIMEZONE).date() - timedelta(days=1)
-    end_day = window_end.astimezone(_TIMEZONE).date()
+    start_day = window_start.astimezone(ATLANTA).date() - timedelta(days=1)
+    end_day = window_end.astimezone(ATLANTA).date()
     candidates = [item for item in listings.values() if start_day <= item.day <= end_day]
     semaphore = asyncio.Semaphore(2)
 

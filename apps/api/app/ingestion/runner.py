@@ -229,7 +229,12 @@ async def run_import(settings: Settings, *, source_names: list[str] | None = Non
                                     content=member.event.content,
                                     observed_at=observed_at,
                                     source_updated_at=member.event.source_updated_at,
-                                    raw_payload=member.event.raw_payload,
+                                    raw_payload={
+                                        "image_url": member.event.image_url,
+                                        "source_url_is_collection": (
+                                            member.event.source_url_is_collection
+                                        ),
+                                    },
                                 )
                                 for member in members
                             ],

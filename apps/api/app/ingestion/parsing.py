@@ -9,10 +9,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from dateutil import parser
 from pydantic import HttpUrl, ValidationError
 
 LocationKind = Literal["in_person", "online", "hybrid", "unknown"]
 PriceStatus = Literal["free", "paid", "conditional", "unknown"]
+
+# Every calendar publishes Atlanta wall-clock times.
+ATLANTA = ZoneInfo("America/New_York")
 
 MEMBERS_ONLY = re.compile(r"\bmembers?[- ]only\b", re.I)
 REGISTRATION = re.compile(r"\b(?:register|registration|rsvp|tickets?|sign[ -]?up)\b", re.I)
@@ -36,11 +40,14 @@ _PAID_PHRASE = re.compile(
 )
 
 
-def text(value: object) -> str:
+def text(value: object, selector: str | None = None) -> str:
     """Visible text of an HTML string or element, entities decoded and whitespace collapsed.
 
-    Scripts and styles are dropped from HTML strings; elements are read as they are, untouched.
+    With a selector, the text of the element's first match ("" when nothing matches). Scripts
+    and styles are dropped from HTML strings; elements are read as they are, untouched.
     """
+    if selector is not None and isinstance(value, Tag):
+        value = value.select_one(selector)
     if isinstance(value, str):
         soup = BeautifulSoup(value, "html.parser")
         for node in soup.select("script, style"):
@@ -143,14 +150,19 @@ def publisher_url(value: str, base: str, path: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
-def localize(naive: datetime, zone: ZoneInfo) -> datetime:
-    """Attach a timezone only to an unambiguous, existent local wall time."""
-    local = naive.replace(tzinfo=zone)
-    if local.astimezone(UTC).astimezone(zone).replace(tzinfo=None) != naive:
+def localize(naive: datetime) -> datetime:
+    """Attach Atlanta's timezone only to an unambiguous, existent local wall time."""
+    local = naive.replace(tzinfo=ATLANTA)
+    if local.astimezone(UTC).astimezone(ATLANTA).replace(tzinfo=None) != naive:
         raise ValueError("Nonexistent local event time")
     if local.utcoffset() != local.replace(fold=1).utcoffset():
         raise ValueError("Ambiguous local event time")
     return local
+
+
+def local_time(value: str) -> datetime:
+    """A date and wall-clock time as a calendar page writes it, such as "Oct 4, 2026 7:30 PM"."""
+    return localize(parser.parse(value))
 
 
 def validation_message(exc: ValidationError) -> str:
