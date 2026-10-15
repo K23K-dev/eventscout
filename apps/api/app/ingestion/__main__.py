@@ -1,8 +1,4 @@
-"""Run with `python -m app.ingestion`, or `pnpm ingest` from the repository root.
-
-Imports the calendars, then summarizes new or changed events and updates the search index,
-as the scheduled workflow does every six hours.
-"""
+"""`pnpm ingest`: import the calendars, then summarize and index what changed."""
 
 import argparse
 import asyncio

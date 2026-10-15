@@ -1,14 +1,11 @@
 """Read individually expanded events from deliberately published iCalendar feeds."""
 
-from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 from icalendar import Calendar, Event
-from pydantic import ValidationError
 
-from app.ingestion.parsing import validation_message
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
+from app.ingestion.records import ParsedEvent, SourceCollection
 
 
 def calendar_text(event: Event, key: str) -> str:
@@ -47,16 +44,7 @@ def parse_calendar_events(
     components: list[Event], parse_event: Callable[[Event], ParsedEvent]
 ) -> SourceCollection:
     result = SourceCollection(records_seen=len(components))
-    identities = Counter(str(part.get("UID", "")) for part in components)
     for part in components:
-        uid = str(part.get("UID", ""))
-        if identities[uid] > 1:
-            result.issues.append(ParseIssue(uid or None, "Repeated calendar occurrence UID"))
-            continue
-        try:
+        with result.issue_if_fails(str(part.get("UID", "")) or None):
             result.events.append(parse_event(part))
-        except ValidationError as exc:
-            result.issues.append(ParseIssue(uid or None, validation_message(exc)))
-        except (ValueError, TypeError, AttributeError) as exc:
-            result.issues.append(ParseIssue(uid or None, str(exc)))
     return result

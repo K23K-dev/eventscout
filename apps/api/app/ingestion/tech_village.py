@@ -10,9 +10,9 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl
 
-from app.ingestion.http import fetch_bytes
+from app.ingestion.http import fetch_bytes, fetch_pages
 from app.ingestion.parsing import (
     ATLANTA,
     MEMBERS_ONLY,
@@ -45,14 +45,11 @@ def _url(value: str, *, internal: bool = False) -> str:
     return str(http_url(result))
 
 
-def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]:
+def _listing(html: bytes, result: SourceCollection) -> tuple[list[_Listing], str | None]:
     soup = BeautifulSoup(html, "html.parser")
-    cards = soup.select(".single-item")
     events: list[_Listing] = []
-    issues: list[ParseIssue] = []
-    for card in cards:
-        external_id: str | None = None
-        try:
+    for card in soup.select(".single-item"):
+        with result.issue_if_fails(None):
             link = card.select_one("a[href][data-wf-cms-context]")
             if link is None:
                 raise ValueError("Missing stable Webflow item identity")
@@ -68,10 +65,8 @@ def _listing(html: bytes) -> tuple[list[_Listing], list[ParseIssue], str | None]
                 raise ValueError("Invalid Webflow item identity")
             day = datetime.strptime(text(card, ".event-date-2"), "%B %d, %Y").date()
             events.append(_Listing(external_id, _url(str(link["href"]), internal=True), day))
-        except (ValueError, TypeError, KeyError) as exc:
-            issues.append(ParseIssue(external_id, str(exc)))
     next_link = soup.select_one("a.w-pagination-next[href]")
-    return events, issues, _url(str(next_link["href"]), internal=True) if next_link else None
+    return events, _url(str(next_link["href"]), internal=True) if next_link else None
 
 
 def _parse_detail(html: bytes, listing: _Listing) -> ParsedEvent:
@@ -135,12 +130,11 @@ async def collect(
             break
         seen.add(url)
         try:
-            page, issues, next_url = _listing(await fetch_bytes(client, url))
+            found, next_url = _listing(await fetch_bytes(client, url), result)
         except (httpx.HTTPError, TimeoutError, ValueError) as exc:
             result.issues.append(ParseIssue(None, f"ATV listing failed ({type(exc).__name__})"))
             break
-        result.issues.extend(issues)
-        for item in page:
+        for item in found:
             listings[item.external_id] = item
         url = next_url
         if url is not None:
@@ -149,22 +143,10 @@ async def collect(
     start_day = window_start.astimezone(ATLANTA).date() - timedelta(days=1)
     end_day = window_end.astimezone(ATLANTA).date()
     candidates = [item for item in listings.values() if start_day <= item.day <= end_day]
-    semaphore = asyncio.Semaphore(2)
-
-    async def detail(item: _Listing) -> ParsedEvent | ParseIssue:
-        try:
-            async with semaphore:
-                await asyncio.sleep(0.5)
-                html = await fetch_bytes(client, item.url)
-            return _parse_detail(html, item)
-        except ValidationError:
-            return ParseIssue(item.external_id, "Invalid event fields on ATV detail page")
-        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-            return ParseIssue(item.external_id, f"ATV detail failed ({type(exc).__name__}: {exc})")
-
-    for parsed in await asyncio.gather(*(detail(item) for item in candidates)):
-        if isinstance(parsed, ParseIssue):
-            result.issues.append(parsed)
-        else:
-            result.events.append(parsed)
+    pages = await fetch_pages(client, [item.url for item in candidates])
+    for item, page in zip(candidates, pages, strict=True):
+        with result.issue_if_fails(item.external_id):
+            if isinstance(page, BaseException):
+                raise page
+            result.events.append(_parse_detail(page, item))
     return result

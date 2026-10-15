@@ -1,10 +1,18 @@
 """Source observations shared by the calendar adapters."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
+from pydantic import ValidationError
+
 from app.storage.models import EventContent
+
+# What a failed download or malformed publisher data raises while one record is read.
+_RECORD_ERRORS = (httpx.HTTPError, TimeoutError, ValueError, TypeError, LookupError, AttributeError)
 
 
 @dataclass(frozen=True)
@@ -26,15 +34,29 @@ class ParseIssue:
 
 @dataclass
 class SourceCollection:
-    """Fetched observations; the runner admits new events only inside its window.
-
-    Keep already-fetched dates outside the window so known occurrences can move.
-    """
+    """A calendar's events, issues and warnings; the runner merges repeated event IDs."""
 
     events: list[ParsedEvent] = field(default_factory=list)
     records_seen: int = 0
     issues: list[ParseIssue] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+    @contextmanager
+    def issue_if_fails(self, external_id: str | None) -> Iterator[None]:
+        """Report a record or page that fails to download or parse, then carry on."""
+        try:
+            yield
+        except _RECORD_ERRORS as exc:
+            self.issues.append(ParseIssue(external_id, issue_message(exc)))
+
+
+def issue_message(exc: BaseException) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    if isinstance(exc, ValidationError):
+        fields = (".".join(map(str, error["loc"])) or "URL" for error in exc.errors())
+        return f"Invalid event fields: {', '.join(fields)}"
+    return str(exc) if isinstance(exc, ValueError) else type(exc).__name__
 
 
 def in_window(content: EventContent, start: datetime, end: datetime) -> bool:

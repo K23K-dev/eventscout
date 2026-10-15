@@ -1,6 +1,5 @@
 """Read the GT Library's paginated public calendar and stable Drupal event pages."""
 
-import asyncio
 import re
 from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlsplit
@@ -10,16 +9,9 @@ from bs4 import BeautifulSoup, Tag
 from dateutil import parser
 from pydantic import HttpUrl
 
-from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import (
-    described_price,
-    http_url,
-    issue_message,
-    local_time,
-    location_kind,
-    text,
-)
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
+from app.ingestion.http import fetch_bytes, fetch_pages
+from app.ingestion.parsing import described_price, http_url, local_time, location_kind, text
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, issue_message
 from app.storage.models import EventContent
 
 LISTING_URL = "https://library.gatech.edu/events-workshops"
@@ -93,12 +85,7 @@ def _parse_detail(html: bytes, url: str, listing_venue: str) -> ParsedEvent:
 async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
-    """Collect upcoming Library events with bounded pagination and two detail requests at once.
-
-    Every date comes from the event's published date and time, interpreted in the
-    Library's Atlanta timezone. Missing fees and audience restrictions remain unknown.
-    Individual failures are returned as issues so a partial import cannot look complete.
-    """
+    """Follow the listing's pages, then read each event's detail page."""
     result = SourceCollection()
     listings: dict[str, str] = {}
     visited: set[str] = set()
@@ -128,31 +115,15 @@ async def collect(
             if next_url and urlsplit(next_url).path != "/events-workshops":
                 raise ValueError("Unexpected Library pagination path")
         except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-            message = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-            result.issues.append(ParseIssue(None, f"Library listing failed: {message}"))
+            result.issues.append(ParseIssue(None, f"Library listing failed: {issue_message(exc)}"))
             break
     else:
         if next_url is not None:
             result.issues.append(ParseIssue(None, "Library pagination exceeded the 50-page limit"))
-
-    semaphore = asyncio.Semaphore(2)
-
-    async def detail(url: str, venue: str) -> ParsedEvent | ParseIssue:
-        async with semaphore:
-            try:
-                return _parse_detail(await fetch_bytes(client, url), url, venue)
-            except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-                return ParseIssue(url, issue_message(exc))
-
-    parsed = await asyncio.gather(*(detail(url, venue) for url, venue in listings.items()))
-    identities: set[str] = set()
-    for event in parsed:
-        if isinstance(event, ParseIssue):
-            result.issues.append(event)
-        elif event.external_id in identities:
-            result.issues.append(ParseIssue(event.external_id, "Repeated Library node ID"))
-        else:
-            identities.add(event.external_id)
-            result.events.append(event)
-    result.events.sort(key=lambda event: event.external_id)
+    urls = list(listings)
+    for url, page in zip(urls, await fetch_pages(client, urls), strict=True):
+        with result.issue_if_fails(url):
+            if isinstance(page, BaseException):
+                raise page
+            result.events.append(_parse_detail(page, url, listings[url]))
     return result

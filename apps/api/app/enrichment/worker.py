@@ -1,8 +1,4 @@
-"""Summarize and tag listed events, once per content version, and queue them for re-embedding.
-
-Summaries describe the activity only; dates, prices, places, and eligibility stay with the
-published listing.
-"""
+"""Summarize and tag each event version once, describing only the activity itself."""
 
 import asyncio
 import json
@@ -52,10 +48,7 @@ class EnrichReport:
 
 
 async def run_enrichment(settings: Settings, *, limit: int = 500) -> EnrichReport:
-    """Enrich up to `limit` listed events whose current content has no enrichment, soonest first.
-
-    A provider error stops the run after the current chunk; the next run picks up the rest.
-    """
+    """Enrich up to `limit` unsummarized events, soonest first; a provider error ends the run."""
     assert settings.openai_api_key is not None
     report = EnrichReport()
     async with (

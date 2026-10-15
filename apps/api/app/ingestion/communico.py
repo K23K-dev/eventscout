@@ -17,7 +17,7 @@ from app.ingestion.icalendar_feed import (
     parse_calendar_events,
 )
 from app.ingestion.parsing import ATLANTA, http_url, location_kind
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
+from app.ingestion.records import ParsedEvent, SourceCollection
 from app.storage.models import EventContent
 
 CALENDARS = {
@@ -28,8 +28,7 @@ _FEED_LIMIT = 500
 
 
 def _feed_params(location_id: str) -> dict[str, str]:
-    # Same payload as the publisher's Add to Calendar control. Its UI explicitly
-    # documents a 500-event cap and that the selected date range is not exported.
+    # The payload of the site's own Add to Calendar button, which exports up to 500 events.
     filters = {
         "feedType": "ical",
         "filters": {
@@ -64,8 +63,7 @@ def _parse_event(event: Event, base: str) -> ParsedEvent:
         and starts.astimezone(ATLANTA).time() == time.min
         and ends.astimezone(ATLANTA).time() == time(23, 59)
     ):
-        # The exported 00:00–23:59 local interval corresponds to the public
-        # detail page's explicit "All day" display, including DST changes.
+        # The export writes all-day events as 00:00–23:59 local time.
         starts = starts.astimezone(ATLANTA).date()
         ends = ends.astimezone(ATLANTA).date() + timedelta(days=1)
     modified = calendar_date(event, "LAST-MODIFIED")
@@ -100,25 +98,14 @@ async def collect(
     library: str,
 ) -> SourceCollection:
     base = CALENDARS[library]
-    # The event listing itself loads this public location metadata to construct
-    # branch filters. No credentials or event-registration endpoints are used.
+    # The same public branch list that the site's own event filters load.
     data = await fetch_bytes(client, f"https://api.communico.co/v1/{library}/locations")
-    locations: object = json.loads(data)
-    if not isinstance(locations, list) or not 1 <= len(locations) <= 100:
-        raise ValueError("Unexpected public library location list")
-    branches: dict[str, str] = {}
-    for location in locations:
-        identity, name = str(location.get("id", "")), str(location.get("name", ""))
-        if not identity.isdecimal() or not name or identity in branches:
-            raise ValueError("Missing or repeated library location identity")
-        branches[identity] = name
+    branches = {str(location["id"]): str(location["name"]) for location in json.loads(data)}
     result = SourceCollection()
-    merged: dict[str, ParsedEvent] = {}
-    conflicts: set[str] = set()
     # All-events also catches an event whose location has not reached metadata yet.
     for location_id, name in {"all": "All locations", **branches}.items():
         await asyncio.sleep(1)
-        try:
+        with result.issue_if_fails(name):
             data = await fetch_bytes(client, f"{base}/feeds", params=_feed_params(location_id))
             # A branch with no events exports one entirely blank placeholder.
             components = [
@@ -126,29 +113,13 @@ async def collect(
                 for part in calendar_events(data)
                 if str(part.get("UID", "")) or str(part.get("SUMMARY", ""))
             ]
-        except (ValueError, httpx.HTTPError, TimeoutError) as exc:
-            result.issues.append(
-                ParseIssue(None, f"{name}: download failed ({type(exc).__name__})")
-            )
-            continue
-        parsed = parse_calendar_events(components, lambda event: _parse_event(event, base))
-        result.records_seen += parsed.records_seen
-        for issue in parsed.issues:
-            if issue not in result.issues:
-                result.issues.append(issue)
-        if location_id != "all" and parsed.records_seen >= _FEED_LIMIT:
-            result.warnings.append(
-                f"{name} reached its 500-event export cap; coverage may be partial"
-            )
-        for event in parsed.events:
-            previous = merged.get(event.external_id)
-            if previous is not None and previous.content != event.content:
-                conflicts.add(event.external_id)
-                continue
-            merged[event.external_id] = event
-    result.issues.extend(
-        ParseIssue(identity, "Conflicting versions across branch subscriptions")
-        for identity in sorted(conflicts)
-    )
-    result.events = [event for identity, event in merged.items() if identity not in conflicts]
+            parsed = parse_calendar_events(components, lambda event: _parse_event(event, base))
+            result.records_seen += parsed.records_seen
+            # Every event is in its branch's feed and the all-locations feed.
+            result.issues.extend(issue for issue in parsed.issues if issue not in result.issues)
+            if location_id != "all" and parsed.records_seen >= _FEED_LIMIT:
+                result.warnings.append(
+                    f"{name} reached its 500-event export cap; coverage may be partial"
+                )
+            result.events.extend(parsed.events)
     return result

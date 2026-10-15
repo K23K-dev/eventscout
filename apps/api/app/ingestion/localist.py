@@ -1,9 +1,4 @@
-"""Read deliberately published Localist iCalendar subscription feeds.
-
-Localist's public export is capped by parent events, rather than VEVENT instances.
-GSU's export currently ignores the date filters included in its subscription URLs;
-fetch it once, filter locally, and report the cap instead of implying full coverage.
-"""
+"""Read Localist iCalendar exports, which cap parent events rather than occurrences."""
 
 import re
 from datetime import datetime, timedelta
@@ -127,8 +122,7 @@ def _discovery_event(event: ParsedEvent) -> bool:
         and content.title.casefold() in _BARE_OBSERVANCES | {"black cat week"}
     ):
         return False
-    # These inspected source listings describe closed performance preparation.
-    # Keep auditions, open rehearsals, and academic practice workshops.
+    # Closed rehearsals aren't events to attend; open rehearsals and auditions stay.
     if content.title.casefold() in {
         "blackfriars student theatre rehearsals",
         "royalette practice",
@@ -136,8 +130,7 @@ def _discovery_event(event: ParsedEvent) -> bool:
         "luchsinger rehersal",
     } and not re.search(r"\b(?:open to the public|open rehearsal)\b", content.description, re.I):
         return False
-    # GSU's institutional calendar includes national away fixtures. Preserve home
-    # sports; avoid presenting away fixtures as Atlanta events without geocoding.
+    # GSU's calendar includes away games across the country; keep the local ones.
     sports_title = re.match(
         r"^(?:Georgia State University |Kennesaw State University |Kennesaw State |"
         r"Agnes Scott College |Agnes Scott )?"

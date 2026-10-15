@@ -178,10 +178,7 @@ def _groups(
 
 
 async def run_import(settings: Settings, *, source_names: list[str] | None = None) -> ImportReport:
-    """Import the next 90 days from the selected calendars (default: all of them).
-
-    Repeat observations do not create canonical changes.
-    """
+    """Import the next 90 days from the selected calendars, or from all of them."""
     sources = [SOURCES[name] for name in dict.fromkeys(source_names or SOURCES)]
     start = datetime.now(UTC)
     end = start + timedelta(days=90)

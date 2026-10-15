@@ -22,13 +22,7 @@ class StaleObservationError(ValueError):
 
 
 class EventStore:
-    """Use an idle autocommit connection with dict rows, dedicated to one caller.
-
-    Source record identity is (source_id, external_id). Adapters must choose a stable
-    external_id, never the occurrence's mutable scheduled date.
-    Older observations/revisions are rejected atomically. An omitted source revision
-    preserves the last known revision. Concurrent callers need separate connections.
-    """
+    """Catalog writes on one caller's idle autocommit connection; stale observations fail."""
 
     def __init__(self, connection: AsyncConnection[dict[str, Any]]) -> None:
         self._connection = connection
@@ -58,12 +52,7 @@ class EventStore:
         merge_ids: tuple[UUID, ...] = (),
         update_content: bool = True,
     ) -> None:
-        """Save a reconciled group and its aliases in one transaction.
-
-        The first observation supplies canonical content. Every member preserves
-        its own content and freshness; a failed member rolls back the entire group.
-        The caller must establish duplicate evidence before requesting a merge.
-        """
+        """Save a matched group in one transaction; its first observation is canonical."""
         identities = [(member.source_id, member.external_id) for member in observations]
         contents = [observation.content.model_dump(mode="json") for observation in observations]
         content_hash = observations[0].content.content_hash()

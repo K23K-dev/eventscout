@@ -1,6 +1,5 @@
 """Collect actual showings from Carbonhouse's public venue calendars."""
 
-import asyncio
 import json
 import re
 from datetime import datetime
@@ -12,15 +11,15 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
-from app.ingestion.http import fetch_bytes
+from app.ingestion.http import fetch_bytes, fetch_pages
 from app.ingestion.parsing import (
     ATLANTA,
     cost_price,
     described_price,
     http_url,
     image_url,
-    issue_message,
     local_time,
+    months,
     text,
 )
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
@@ -150,34 +149,25 @@ async def collect(
     window_start: datetime,
     window_end: datetime,
 ) -> SourceCollection:
-    """Read published month-calendar JSON and detail pages with two requests at once.
-
-    The month endpoint is the same public feed used by the publisher's calendar.
-    Stable showing IDs keep separate performances distinct without treating a
-    multiweek production's first and last dates as one continuous event.
-    """
+    """Read the month calendars' JSON, then each detail page; every showing is its own event."""
     result = SourceCollection()
     parts = urlsplit(calendar_url)
     origin = f"{parts.scheme}://{parts.netloc}"
-    current = window_start.astimezone(ATLANTA).replace(day=1)
-    last = window_end.astimezone(ATLANTA).replace(day=1)
+    first_day, last_day = (
+        moment.astimezone(ATLANTA).date() for moment in (window_start, window_end)
+    )
     urls: set[str] = set()
-    while (current.year, current.month) <= (last.year, last.month):
-        try:
+    for month in months(window_start, window_end):
+        with result.issue_if_fails(f"{month:%B %Y} calendar"):
             data = json.loads(
                 await fetch_bytes(
                     client,
-                    f"{origin}/events/calendar/{current.year}/{current.month}",
+                    f"{origin}/events/calendar/{month.year}/{month.month}",
                     params={"v": "2", "detail_partial": "events/partials/calendar_detail"},
                 )
             )
             for day, markup in data.items() if isinstance(data, dict) else []:
-                published_day = datetime.strptime(day, "%m-%d-%Y").date()
-                if (
-                    not window_start.astimezone(ATLANTA).date()
-                    <= published_day
-                    <= window_end.astimezone(ATLANTA).date()
-                ):
+                if not first_day <= datetime.strptime(day, "%m-%d-%Y").date() <= last_day:
                     continue
                 for anchor in BeautifulSoup(markup, "html.parser").select("h3 a[href]"):
                     url = _url(anchor.get("href"), origin)
@@ -189,37 +179,17 @@ async def collect(
                         )
                         continue
                     urls.add(url)
-        except (httpx.HTTPError, TimeoutError, ValueError, TypeError) as exc:
-            result.issues.append(ParseIssue(None, f"Month calendar failed ({type(exc).__name__})"))
-        current = current.replace(
-            year=current.year + (current.month == 12), month=current.month % 12 + 1
-        )
     if len(urls) > 300:
         result.issues.append(ParseIssue(None, "Calendar exceeds the 300-detail limit"))
         return result
-    semaphore = asyncio.Semaphore(2)
-
-    async def detail(url: str) -> tuple[list[ParsedEvent], list[str]] | ParseIssue:
-        async with semaphore:
-            try:
-                return _parse_detail(await fetch_bytes(client, url), url, default_venue)
-            except (httpx.HTTPError, TimeoutError, ValueError, TypeError) as exc:
-                return ParseIssue(url, issue_message(exc))
-
-    identities: set[str] = set()
-    for response in await asyncio.gather(*(detail(url) for url in sorted(urls))):
-        if isinstance(response, ParseIssue):
-            result.issues.append(response)
-            continue
-        events, warnings = response
-        result.warnings.extend(warnings)
-        result.records_seen += len(events)
-        for event in events:
-            if event.external_id in identities:
-                result.issues.append(ParseIssue(event.external_id, "Repeated showing ID"))
-                continue
-            identities.add(event.external_id)
-            result.events.append(event)
-    result.events.sort(key=lambda event: event.external_id)
+    ordered = sorted(urls)
+    for url, page in zip(ordered, await fetch_pages(client, ordered), strict=True):
+        with result.issue_if_fails(url):
+            if isinstance(page, BaseException):
+                raise page
+            events, warnings = _parse_detail(page, url, default_venue)
+            result.warnings.extend(warnings)
+            result.records_seen += len(events)
+            result.events.extend(events)
     result.warnings = sorted(set(result.warnings))
     return result

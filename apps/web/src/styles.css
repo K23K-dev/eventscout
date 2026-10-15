@@ -4,10 +4,7 @@
 /* The app is always dark, so shadcn's dark: variants always apply. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/*
- * Georgia Tech colors: deep navy surfaces built on GT Navy (#003057), with Tech Gold (#b3a369)
- * for primary actions, active states, and focus rings. Every text pairing meets WCAG AA.
- */
+/* Georgia Tech colors: GT Navy (#003057) surfaces, Tech Gold (#b3a369) accents, WCAG AA. */
 :root {
   color-scheme: dark;
   --radius: 0.5rem;

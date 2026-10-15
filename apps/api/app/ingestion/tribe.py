@@ -7,10 +7,8 @@ from datetime import UTC, datetime, timedelta
 from html import unescape
 from typing import Any
 from urllib.parse import urljoin, urlsplit
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-from bs4 import BeautifulSoup
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
@@ -19,12 +17,10 @@ from app.ingestion.parsing import (
     MEMBERS_ONLY,
     cost_price,
     image_url,
-    issue_message,
     location_kind,
-    registration_link,
     text,
 )
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, issue_message
 from app.storage.models import EventContent
 
 _ARTSATL_WEEKLY_SERIES = {
@@ -69,12 +65,6 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
     title = text(event.get("title"))
     description = text(event.get("description"))
     all_day = event.get("all_day") is True
-    zone = str(event.get("timezone", "America/New_York"))
-    try:
-        ZoneInfo(zone)
-    except (ZoneInfoNotFoundError, ValueError):
-        # UTC timestamps remain authoritative if a publisher uses an offset label.
-        zone = "America/New_York"
     starts_at = ends_at = None
     start_date = end_date = None
     if all_day:
@@ -91,16 +81,12 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
             and source_url.host in {"artsatl.org", "www.artsatl.org"}
             and (cadence := _ARTSATL_WEEKLY_SERIES.get(str(event.get("slug"))))
             and re.search(cadence[0], description, re.I)
-            and (local_start := starts_at.astimezone(ZoneInfo(zone))).weekday() == cadence[1]
+            and (local_start := starts_at.astimezone(ATLANTA)).weekday() == cadence[1]
             and (local_start.hour, local_start.minute) == (cadence[2], 0)
-            and str(source_url)
-            .rstrip("/")
-            .endswith("/" + starts_at.astimezone(ZoneInfo(zone)).date().isoformat())
+            and str(source_url).rstrip("/").endswith("/" + local_start.date().isoformat())
             and ends_at - starts_at > timedelta(days=7)
         ):
-            # These verified weekly series inherit their whole run's duration.
-            # Dated URLs and an explicit weekly cadence establish separate
-            # visits, but conflicting published clocks do not justify an end.
+            # These weekly series give each visit the whole run's end, so leave it unknown.
             ends_at = None
     venues = event.get("venue")
     venue = venues if isinstance(venues, dict) else {}
@@ -111,21 +97,14 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
             if (value := text(venue.get(field)))
         )
     )
-    registration = registration_link(
-        BeautifulSoup(str(event.get("description", "")), "html.parser"), str(source_url)
-    )
     website = event.get("website")
-    if (
-        registration is None
-        and isinstance(website, str)
-        and re.search(
-            r"(?:eventbrite\.|seetickets\.|freshtix\.|ticket|register|registration|rsvp)",
-            website,
-            re.I,
-        )
-        and (site := _url(website, str(source_url)))
-    ):
-        registration = str(site)
+    # A ticketing or sign-up page in the website field is the registration link.
+    registration = (
+        _url(website, str(source_url))
+        if isinstance(website, str)
+        and re.search(r"eventbrite\.|seetickets\.|freshtix\.|ticket|register|rsvp", website, re.I)
+        else None
+    )
     price_status, price_details = cost_price(text(event.get("cost")))
     tags = [
         label
@@ -146,7 +125,6 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         all_day=all_day,
         start_date=start_date,
         end_date=end_date,
-        timezone=zone,
         venue=location or None,
         location_kind=location_kind(location),
         price_status=price_status,
@@ -154,7 +132,7 @@ def _parse(event: dict[str, Any], base_url: str) -> ParsedEvent:
         audience=audience,
         tags=tags,
         source_url=source_url,
-        registration_url=HttpUrl(registration) if registration else None,
+        registration_url=registration,
     )
     # WordPress publishes several sizes; the 768px one suits event cards.
     image = event.get("image")
@@ -172,13 +150,8 @@ async def collect(
     crawl_delay: float = 1,
     excluded_cities: frozenset[str] = frozenset(),
 ) -> SourceCollection:
-    """Read up to 100 pages, preserving published recurrence IDs and filtering locally.
-
-    The API's overlapping-date filters include ongoing exhibitions. Perpetual
-    self-guided attractions and events in explicitly excluded cities are omitted.
-    """
+    """Read up to 100 pages, skipping excluded cities and self-guided "any time" attractions."""
     result = SourceCollection()
-    seen: set[str] = set()
     skipped = 0
     excluded_series: dict[str, int] = {}
     params = {
@@ -208,12 +181,6 @@ async def collect(
                 result.issues.append(ParseIssue(None, "Expected an event object"))
                 continue
             identity = str(item.get("id", ""))
-            if identity in seen:
-                result.issues.append(
-                    ParseIssue(identity, "Repeated event ID across calendar pages")
-                )
-                continue
-            seen.add(identity)
             slug = str(item.get("slug", ""))
             if (
                 urlsplit(api_url).hostname in {"artsatl.org", "www.artsatl.org"}
@@ -230,10 +197,8 @@ async def collect(
             if city in excluded_cities or evergreen:
                 skipped += 1
                 continue
-            try:
+            with result.issue_if_fails(identity):
                 result.events.append(_parse(item, api_url))
-            except (ValueError, TypeError) as exc:
-                result.issues.append(ParseIssue(identity, issue_message(exc)))
         if page >= pages:
             break
     else:
@@ -247,5 +212,4 @@ async def collect(
             f"Excluded {count} unreliable occurrences from {slug}: "
             + _ARTSATL_EXCLUDED_SERIES[slug]
         )
-    result.events.sort(key=lambda event: event.external_id)
     return result

@@ -103,11 +103,7 @@ async def requeue(
 
 
 async def run_indexing(settings: Settings, *, reindex: bool = False) -> IndexReport:
-    """Create the index on first use, then embed, remove, or skip queued events.
-
-    With reindex, every event's current version is queued again first, to apply a change
-    in how events are embedded or described.
-    """
+    """Embed, remove or skip queued events; with `reindex`, every event is queued again first."""
     assert settings.openai_api_key is not None and settings.pinecone_api_key is not None
     async with (
         connect_database(settings) as connection,

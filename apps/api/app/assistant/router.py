@@ -192,12 +192,7 @@ def create_assistant_router(settings: Settings, tasks: AnswerTasks) -> APIRouter
     async def ask(
         started: Annotated[StartedTurn, Depends(start_turn)],
     ) -> AsyncIterable[ServerSentEvent]:
-        """Answer one message as Server-Sent Events.
-
-        In order: `turn` (conversation and turn IDs); `status` updates (understanding,
-        searching, writing); `results` with candidate events as soon as the search ends;
-        then `answer` and `done`, or `error`. The answer is saved even if the client leaves.
-        """
+        """Stream one answer as Server-Sent Events: turn, status, results, then answer or error."""
         ids = {"conversation_id": started.conversation_id, "turn_id": started.turn_id}
         yield ServerSentEvent(event="turn", data=ids)
         yield ServerSentEvent(event="status", data={"stage": "understanding"})

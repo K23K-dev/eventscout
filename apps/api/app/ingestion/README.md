@@ -34,17 +34,17 @@ EventStore.upsert_group, 4 writers                 storage/
 | --- | --- | --- |
 | `gatech.py` | RSS category feeds | Georgia Tech campus calendar |
 | `library.py` | Paginated HTML listing + Drupal detail pages | Georgia Tech Library |
-| `trumba.py` | Trumba JSON, fetched in weekly slices that split down to single days when a slice hits the 1,000-event cap | Emory |
+| `trumba.py` | Trumba JSON, the whole window in one request, well under its 1,000-event cap | Emory |
 | `localist.py` | Localist iCalendar exports | Georgia State, Kennesaw State, Agnes Scott |
 | `communico.py` | Per-branch iCalendar exports, merged per library system | DeKalb and Gwinnett public libraries |
 | `nature.py` | HTML month views; a Squarespace list read through its calendar-export links | Trees Atlanta, South Fork Conservancy |
 | `tribe.py` | The Events Calendar REST API | Piedmont Park, Cobb Travel & Tourism, ArtsATL |
 | `tech_village.py` | Webflow listing + detail pages | Atlanta Tech Village |
-| `chambermaster.py` | ChamberMaster month grids + detail pages | DeKalb and Greater Perimeter chambers |
+| `chambermaster.py` | ChamberMaster month grids + detail pages, timed events only | DeKalb and Greater Perimeter chambers |
 | `carbonhouse.py` | Venue month listings + showing pages | Atlanta Symphony, Fox Theatre, State Farm Arena |
 | `puppetry.py` | Month calendar, read with the publisher's 30-second delay | Center for Puppetry Arts |
 
-Every adapter returns a `SourceCollection` (`records.py`): parsed events, records seen, per-record issues, and warnings such as "export cap reached". A `ParsedEvent` carries:
+Every adapter returns a `SourceCollection` (`records.py`): parsed events, records seen, per-record issues, and warnings such as "export cap reached". Its `issue_if_fails` turns a record that fails to download or parse into an issue, so one bad record never stops a calendar. An event ID may repeat, like one show on two month pages; the runner keeps its newest version. A `ParsedEvent` carries:
 - a stable `external_id`, never the date
 - normalized `EventContent`
 - the source's own revision time, when it publishes one
@@ -52,8 +52,8 @@ Every adapter returns a `SourceCollection` (`records.py`): parsed events, record
 - whether its source URL is a listing page shared by many events, which matching then can't treat as the event's identity
 
 Shared code:
-- `http.py` bounds every download to 60 seconds and 20 MiB.
-- `parsing.py` holds the cross-publisher rules: visible text, online/in-person detection, free/paid wording, registration links, and Atlanta wall-clock times. Every calendar publishes local times, so `ATLANTA` is the one timezone, and `localize` refuses nonexistent or ambiguous DST times.
+- `http.py` bounds every download to 60 seconds and 20 MiB, and fetches detail pages two at a time, half a second apart.
+- `parsing.py` holds the cross-publisher rules: visible text, online/in-person detection, free/paid wording, Atlanta wall-clock times, and the months an import window touches. Every calendar publishes local times, so `ATLANTA` is the one timezone.
 - `icalendar_feed.py` reads iCalendar exports for the iCal-based adapters.
 
 ## Parsing policy
@@ -78,7 +78,6 @@ Several calendars often list the same event (ArtsATL reposts a GSU recital, say)
 | source URL + start | the same listing seen twice |
 | registration URL + title + start | one ticket page shared by two listings |
 | publisher + title + start + venue | one publisher's repeated posts |
-| title + start + venue + description (200+ chars) | identical reposts |
 | title + start + venue name of three or more words | the same event, venue spelled the same way |
 | title + start + street address | the same event, with street abbreviations normalized |
 

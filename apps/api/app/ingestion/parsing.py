@@ -1,16 +1,16 @@
 """Parsing rules shared by the publisher-specific adapters."""
 
 import re
-from datetime import UTC, datetime
+from datetime import date, datetime
 from html import unescape
 from typing import Literal
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
-import httpx
 from bs4 import BeautifulSoup, Tag
 from dateutil import parser
-from pydantic import HttpUrl, ValidationError
+from dateutil.rrule import MONTHLY, rrule
+from pydantic import HttpUrl
 
 LocationKind = Literal["in_person", "online", "hybrid", "unknown"]
 PriceStatus = Literal["free", "paid", "conditional", "unknown"]
@@ -19,13 +19,8 @@ PriceStatus = Literal["free", "paid", "conditional", "unknown"]
 ATLANTA = ZoneInfo("America/New_York")
 
 MEMBERS_ONLY = re.compile(r"\bmembers?[- ]only\b", re.I)
-REGISTRATION = re.compile(r"\b(?:register|registration|rsvp|tickets?|sign[ -]?up)\b", re.I)
 
-_PLACEHOLDER_VENUE = re.compile(
-    r"(?:location:\s*)?(?:tba|tbd|to be (?:announced|determined)|location tbd|n/a"
-    r"|see description|related link|various locations)",
-    re.I,
-)
+_PLACEHOLDER_VENUE = re.compile(r"tba|tbd|related link", re.I)
 _FREE_WORDING = re.compile(r"\b(?:free|no (?:charge|cost|fee)|complimentary)\b", re.I)
 _FREE_PHRASE = re.compile(
     r"\b(?:free(?:[,\s]+(?:statewide|virtual|online)){0,2}\s+"
@@ -41,34 +36,24 @@ _PAID_PHRASE = re.compile(
 
 
 def text(value: object, selector: str | None = None) -> str:
-    """Visible text of an HTML string or element, entities decoded and whitespace collapsed.
-
-    With a selector, the text of the element's first match ("" when nothing matches). Scripts
-    and styles are dropped from HTML strings; elements are read as they are, untouched.
-    """
+    """Visible text of HTML or an element, or of its first `selector` match, spaces collapsed."""
     if selector is not None and isinstance(value, Tag):
         value = value.select_one(selector)
     if isinstance(value, str):
-        soup = BeautifulSoup(value, "html.parser")
-        for node in soup.select("script, style"):
-            node.decompose()
-        value = soup
+        value = BeautifulSoup(value, "html.parser")
     if not isinstance(value, Tag):
         return ""
     return " ".join(unescape(value.get_text(" ", strip=True)).split())
 
 
 def location_kind(venue: str | None) -> LocationKind:
-    """How to attend, from a venue line: in person for a named place, online or hybrid when it
-    says so. A place that also mentions a video link ("Room 101 / Zoom") stays unknown."""
+    """In person for a named place, online or hybrid when it says so, otherwise unknown."""
     venue = (venue or "").strip()
     if not venue or _PLACEHOLDER_VENUE.fullmatch(venue):
         return "unknown"
     if re.search(r"\bhybrid\b", venue, re.I):
         return "hybrid"
-    if re.match(r"(?:online|virtual|zoom|webinar|microsoft teams)\b", venue, re.I) or re.search(
-        r"\b(?:online|virtual) (?:event|session|meeting|program|class|workshop)\b", venue, re.I
-    ):
+    if re.match(r"(?:online|virtual|zoom|webinar|microsoft teams)\b", venue, re.I):
         return "online"
     if re.search(r"\b(?:online|virtual|zoom|webinar)\b", venue, re.I):
         return "unknown"
@@ -76,8 +61,7 @@ def location_kind(venue: str | None) -> LocationKind:
 
 
 def cost_price(cost: str | None) -> tuple[PriceStatus, str | None]:
-    """Classify a published cost: amounts are paid, free wording is free unless qualified
-    ("free for members"), and free alongside a price is conditional."""
+    """Paid for an amount, free unless qualified ("free for members"), conditional if both."""
     cost = " ".join((cost or "").split())
     value = cost.casefold()
     bare = value.strip(" .!")
@@ -108,16 +92,6 @@ def described_price(description: str) -> tuple[PriceStatus, str | None]:
     return "unknown", None
 
 
-def registration_link(scope: Tag | None, base: str) -> str | None:
-    """The first link whose text offers registration or tickets, as an absolute web address."""
-    for anchor in scope.select("a[href]") if scope else []:
-        if REGISTRATION.search(text(anchor)):
-            target = urljoin(base, str(anchor["href"]))
-            if urlsplit(target).scheme in {"http", "https"}:
-                return target
-    return None
-
-
 def http_url(value: str) -> HttpUrl:
     parts = urlsplit(value)
     if parts.scheme not in {"http", "https"} or parts.username or parts.password:
@@ -126,9 +100,7 @@ def http_url(value: str) -> HttpUrl:
 
 
 def image_url(value: object, base: str = "") -> str | None:
-    """An https picture address from a feed: a URL, a list of URLs, or an {"url": ...} object."""
-    if isinstance(value, list):
-        value = value[0] if value else None
+    """An https picture address from a feed: a URL, or an {"url": ...} object."""
     if isinstance(value, dict):
         value = value.get("url")
     if not isinstance(value, str) or not value.strip():
@@ -137,45 +109,13 @@ def image_url(value: object, base: str = "") -> str | None:
     return url if url.startswith("https://") else None
 
 
-def publisher_url(value: str, base: str, path: str) -> str:
-    parts = urlsplit(urljoin(base, value))
-    if (
-        parts.scheme != "https"
-        or parts.hostname != urlsplit(base).hostname
-        or parts.username
-        or parts.password
-        or not parts.path.startswith(path)
-    ):
-        raise ValueError("Expected a link on the publisher's public calendar")
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
-
-
-def localize(naive: datetime) -> datetime:
-    """Attach Atlanta's timezone only to an unambiguous, existent local wall time."""
-    local = naive.replace(tzinfo=ATLANTA)
-    if local.astimezone(UTC).astimezone(ATLANTA).replace(tzinfo=None) != naive:
-        raise ValueError("Nonexistent local event time")
-    if local.utcoffset() != local.replace(fold=1).utcoffset():
-        raise ValueError("Ambiguous local event time")
-    return local
-
-
 def local_time(value: str) -> datetime:
     """A date and wall-clock time as a calendar page writes it, such as "Oct 4, 2026 7:30 PM"."""
-    return localize(parser.parse(value))
+    return parser.parse(value).replace(tzinfo=ATLANTA)
 
 
-def validation_message(exc: ValidationError) -> str:
-    fields = ", ".join(
-        ".".join(str(part) for part in error["loc"]) or "URL"
-        for error in exc.errors(include_input=False)
-    )
-    return f"Invalid event fields: {fields}"
-
-
-def issue_message(exc: BaseException) -> str:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, ValidationError):
-        return "Invalid event fields"
-    return str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+def months(start: datetime, end: datetime) -> list[date]:
+    """The first day of every Atlanta month the window touches, for month-by-month calendars."""
+    first = start.astimezone(ATLANTA).date().replace(day=1)
+    last = end.astimezone(ATLANTA).date()
+    return [day.date() for day in rrule(MONTHLY, dtstart=first, until=last)]

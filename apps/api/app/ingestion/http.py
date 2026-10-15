@@ -18,3 +18,15 @@ async def fetch_bytes(
             if len(data) > _DOWNLOAD_LIMIT:
                 raise ValueError("response exceeds the 20 MiB download limit")
         return bytes(data)
+
+
+async def fetch_pages(client: httpx.AsyncClient, urls: list[str]) -> list[bytes | BaseException]:
+    """Download pages two at a time, 0.5 s apart; a failed download returns its exception."""
+    semaphore = asyncio.Semaphore(2)
+
+    async def fetch(url: str) -> bytes:
+        async with semaphore:
+            await asyncio.sleep(0.5)
+            return await fetch_bytes(client, url)
+
+    return await asyncio.gather(*(fetch(url) for url in urls), return_exceptions=True)

@@ -44,7 +44,6 @@ def _source(slug: str, publisher: str, name: str, url: str, collect: Collector) 
     )
 
 
-# When several calendars list the same event, the earliest one here supplies its details.
 SOURCES = {
     source.config.slug: source
     for source in (

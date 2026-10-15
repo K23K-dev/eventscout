@@ -79,11 +79,7 @@ async def search_events(
     limit: int = 5,
     depth: int = 30,
 ) -> list[EventResponse]:
-    """Rank by keywords and by meaning, fuse, and drop anything that fails a filter.
-
-    Keywords default to the query itself. Without either, the structured filters alone
-    apply and events come soonest first.
-    """
+    """Rank by keywords and by meaning, fuse, and drop anything that fails a filter."""
     text = (query if keywords is None else keywords).strip()
     keyword_ids, vector_ids = await asyncio.gather(
         # With a query but no keywords, a keyword ranking would only add date order.

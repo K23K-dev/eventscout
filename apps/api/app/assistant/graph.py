@@ -1,8 +1,4 @@
-"""The answer pipeline as a LangGraph: parse, retrieve, explain, and validate each turn.
-
-Postgres supplies every event fact. The model only chooses among retrieved candidates and
-explains them; code checks each citation before anything is shown.
-"""
+"""LangGraph pipeline: parse, retrieve, explain, validate. Event facts come only from Postgres."""
 
 import json
 import logging

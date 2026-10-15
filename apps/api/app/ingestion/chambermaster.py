@@ -3,23 +3,15 @@
 import asyncio
 import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
-from urllib.parse import urlsplit
+from datetime import datetime
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from icalendar import Calendar
 from pydantic import HttpUrl
 
-from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import (
-    ATLANTA,
-    MEMBERS_ONLY,
-    cost_price,
-    location_kind,
-    publisher_url,
-    text,
-)
+from app.ingestion.http import fetch_bytes, fetch_pages
+from app.ingestion.parsing import MEMBERS_ONLY, cost_price, location_kind, months, text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -37,31 +29,25 @@ class _Listing:
     title: str
 
 
-def _event_url(base: str, value: str, *, path: str = "/events/details/") -> str:
-    return publisher_url(value, base, path)
+def _detail_url(href: str, base: str) -> str:
+    parts = urlsplit(urljoin(base, href))
+    on_calendar = parts.scheme == "https" and parts.netloc == urlsplit(base).netloc
+    if not on_calendar or not parts.path.startswith("/events/details/"):
+        raise ValueError("Expected an event page on the chamber's own calendar")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
-def _listing(html: bytes, base: str) -> tuple[list[_Listing], list[ParseIssue]]:
+def _listing(html: bytes, base: str, result: SourceCollection) -> list[_Listing]:
     soup = BeautifulSoup(html, "html.parser")
     items: dict[str, _Listing] = {}
-    issues: list[ParseIssue] = []
     for link in soup.select('table.gz-cal-grid a[href*="/events/details/"]'):
-        try:
-            url = _event_url(base, str(link.get("href")))
+        with result.issue_if_fails(None):
+            url = _detail_url(str(link.get("href")), base)
             identity = re.search(r"-(\d+)$", urlsplit(url).path)
             if identity is None:
                 raise ValueError("Event is missing its stable ChamberMaster identity")
             items[identity[1]] = _Listing(identity[1], url, text(link))
-        except ValueError as exc:
-            issues.append(ParseIssue(None, str(exc)))
-    return list(items.values()), issues
-
-
-def _datetime(value: str | None) -> datetime:
-    result = datetime.fromisoformat(str(value))
-    if result.tzinfo is None:
-        raise ValueError("Structured event timestamp must specify a timezone")
-    return result.astimezone(UTC)
+    return list(items.values())
 
 
 def _content(node: Tag, selector: str) -> str | None:
@@ -70,63 +56,23 @@ def _content(node: Tag, selector: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _detail(html: bytes) -> tuple[Tag, str | None]:
-    soup = BeautifulSoup(html, "html.parser")
-    event = soup.select_one('.gz-event-details[itemtype="http://schema.org/Event"]')
+def _parse(html: bytes, item: _Listing, publisher: str) -> ParsedEvent | None:
+    event = BeautifulSoup(html, "html.parser").select_one(
+        '.gz-event-details[itemtype="http://schema.org/Event"]'
+    )
     if event is None:
         raise ValueError("Public event detail structure is missing")
-    # Date-only activities need the advertised export's VALUE=DATE semantics.
-    time_label = text(event, ".gz-details-time")
-    ical = None
-    if not re.search(r"\d{1,2}:\d{2}\s*[AP]M", time_label, re.I):
-        for link in soup.select('a[href*="/events/addtocalendar/"]'):
-            href = link.get("href")
-            if isinstance(href, str) and "format=ICal" in href:
-                ical = href
-                break
-        if ical is None:
-            raise ValueError("Event without an explicit clock time needs its iCalendar export")
-    return event, ical
-
-
-def _parse(item: _Listing, event: Tag, *, publisher: str, ical: bytes | None) -> ParsedEvent | None:
     title = _content(event, 'meta[itemprop="name"]') or item.title
     if _ADMINISTRATIVE.search(title):
         return None
-    raw_end = _content(event, '[itemprop="endDate"]')
-    starts_at: datetime | None = None
-    ends_at: datetime | None = None
-    if ical is None:
-        starts_at = _datetime(_content(event, '[itemprop="startDate"]'))
-        ends_at = _datetime(raw_end) if raw_end else None
+    # Without a clock time the structured start is only a date, and the event can't be timed.
+    if not re.search(r"\d{1,2}:\d{2}\s*[AP]M", text(event, ".gz-details-time"), re.I):
+        raise ValueError("Event has a date but no clock time")
+    starts_at = datetime.fromisoformat(str(_content(event, '[itemprop="startDate"]')))
+    end = _content(event, '[itemprop="endDate"]')
+    ends_at = datetime.fromisoformat(end) if end else None
     if ends_at == starts_at:
         ends_at = None
-    all_day = False
-    start_date = end_date = None
-    calendar_cancelled = False
-    if ical is not None:
-        events = Calendar.from_ical(ical).walk("VEVENT")
-        if len(events) != 1:
-            raise ValueError("Expected one occurrence in the event iCalendar export")
-        component = events[0]
-        calendar_cancelled = str(component.get("STATUS", "")).upper() == "CANCELLED"
-        if component.get("RRULE") is not None:
-            raise ValueError("Unexpected recurrence rule in an occurrence export")
-        start = component.decoded("DTSTART")
-        end = component.decoded("DTEND") if "DTEND" in component else None
-        if isinstance(start, date) and not isinstance(start, datetime):
-            all_day = True
-            starts_at = ends_at = None
-            start_date = start
-            end_date = end
-        elif isinstance(start, datetime) and start.tzinfo is not None:
-            starts_at = start.astimezone(UTC)
-            if end is not None:
-                if not isinstance(end, datetime) or end.tzinfo is None:
-                    raise ValueError("Timed event end must specify a timezone")
-                ends_at = end.astimezone(UTC) if end != start else None
-        else:
-            raise ValueError("Invalid date in event export")
     description = text(event, ".gz-event-description")
     venue = text(event, '[itemprop="location"] [itemprop="name"]')
     kind = location_kind(venue)
@@ -152,7 +98,7 @@ def _parse(item: _Listing, event: Tag, *, publisher: str, ical: bytes | None) ->
         None,
     )
     status = _content(event, 'meta[itemprop="eventStatus"]') or ""
-    cancelled = calendar_cancelled or status in {
+    cancelled = status in {
         "EventCancelled",
         "https://schema.org/EventCancelled",
         "http://schema.org/EventCancelled",
@@ -164,9 +110,6 @@ def _parse(item: _Listing, event: Tag, *, publisher: str, ical: bytes | None) ->
             description=description,
             starts_at=starts_at,
             ends_at=ends_at,
-            start_date=start_date,
-            end_date=end_date,
-            all_day=all_day,
             venue=venue or None,
             location_kind=kind,
             audience=audience,
@@ -189,53 +132,25 @@ async def collect(
 ) -> SourceCollection:
     result = SourceCollection()
     listings: dict[str, _Listing] = {}
-    month = window_start.astimezone(ATLANTA).date().replace(day=1)
-    last = window_end.astimezone(ATLANTA).date().replace(day=1)
-    while month <= last:
-        url = f"{calendar_url.rstrip('/')}/{month.isoformat()}"
-        try:
-            items, issues = _listing(await fetch_bytes(client, url), calendar_url)
-            result.issues.extend(issues)
-            for item in items:
-                listings[item.external_id] = item
-        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-            result.issues.append(ParseIssue(None, f"Month {month} failed ({type(exc).__name__})"))
-        month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
-        if month <= last:
+    for index, month in enumerate(months(window_start, window_end)):
+        if index:
             await asyncio.sleep(0.5)
+        with result.issue_if_fails(f"{month:%B %Y} grid"):
+            grid = await fetch_bytes(client, f"{calendar_url.rstrip('/')}/{month.isoformat()}")
+            for item in _listing(grid, calendar_url, result):
+                listings[item.external_id] = item
     result.records_seen = len(listings)
     if len(listings) > 1000:
         result.issues.append(
             ParseIssue(None, "Month grids exceeded the 1,000-occurrence read limit")
         )
         return result
-    semaphore = asyncio.Semaphore(2)
-
-    async def fetch(url: str) -> bytes:
-        async with semaphore:
-            await asyncio.sleep(0.5)
-            return await fetch_bytes(client, url)
-
-    async def detail(item: _Listing) -> ParsedEvent | ParseIssue | None:
-        if _ADMINISTRATIVE.search(item.title):
-            return None
-        try:
-            event, ical_url = _detail(await fetch(item.url))
-            ical = None
-            if ical_url:
-                allowed = _event_url(calendar_url, ical_url, path="/events/addtocalendar/")
-                if not urlsplit(allowed).path.endswith(f"-{item.external_id}"):
-                    raise ValueError("Calendar export does not match the event identity")
-                ical = await fetch(allowed + "?format=ICal")
-            return _parse(item, event, publisher=publisher, ical=ical)
-        except (httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:
-            return ParseIssue(
-                item.external_id, f"Event detail failed ({type(exc).__name__}: {exc})"
-            )
-
-    for parsed in await asyncio.gather(*(detail(item) for item in listings.values())):
-        if isinstance(parsed, ParseIssue):
-            result.issues.append(parsed)
-        elif parsed is not None:
-            result.events.append(parsed)
+    items = [item for item in listings.values() if not _ADMINISTRATIVE.search(item.title)]
+    pages = await fetch_pages(client, [item.url for item in items])
+    for item, page in zip(items, pages, strict=True):
+        with result.issue_if_fails(item.external_id):
+            if isinstance(page, BaseException):
+                raise page
+            if event := _parse(page, item, publisher):
+                result.events.append(event)
     return result

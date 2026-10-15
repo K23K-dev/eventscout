@@ -32,8 +32,7 @@ function subscribe(listener: () => void) {
   }
 }
 
-// Back from Google, the address carries a one-time code (or an error). Take it out before the
-// router reads the address, then trade the code for a session.
+// Back from Google: strip the sign-in code from the address, then trade it for a session.
 let exchanging = false
 const params = new URLSearchParams(window.location.search)
 const code = params.get('code')

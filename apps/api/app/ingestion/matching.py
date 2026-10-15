@@ -121,17 +121,8 @@ def _keys(
         keys.add(("registration", _url(str(content.registration_url)), title, when))
     if content.venue and content.location_kind == "in_person":
         keys.add(("publisher-title-venue", publisher, title, when, _label(content.venue)))
-        descriptions = {_label(content.description)}
-        heading, separator, body = content.description.partition("\n\n")
-        # Some publishers put a standalone room heading before the same event text.
-        if separator and len(heading) < 80 and not re.search(r"[.!?]", heading):
-            descriptions.add(_label(body))
         venue = _label(content.venue.split(",", 1)[0])
-        for description in descriptions:
-            if len(description) >= 200:
-                keys.add(("description-title-venue", title, when, venue, description))
-        # One title at one time and place is one event, whichever calendar lists it and however
-        # it spells the venue. One- and two-word names like "Atlanta" are too vague to count.
+        # One title, time and place is one event; venue names under three words are too vague.
         if len(venue.split()) >= 3:
             keys.add(("title-venue", title, when, venue))
         if address := _address(content.venue):

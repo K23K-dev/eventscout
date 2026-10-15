@@ -1,7 +1,7 @@
 """Public HTML calendars for local conservation and volunteering events."""
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import ATLANTA, local_time, location_kind, text
+from app.ingestion.parsing import local_time, location_kind, months, text
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
 from app.storage.models import EventContent
 
@@ -17,7 +17,7 @@ TREES_URL = "https://www.treesatlanta.org/get-involved/events/"
 SOUTH_FORK_URL = "https://southforkconservancy.org/events"
 
 
-def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
+def _tree_event(card: Tag, month: date) -> ParsedEvent:
     anchor = card.find_parent("a", href=True)
     if anchor is None:
         raise ValueError("Missing event URL")
@@ -36,9 +36,9 @@ def _tree_event(card: Tag, year: int, month: int) -> ParsedEvent:
     if times is None:
         raise ValueError("Missing explicit start time")
     # The requested month supplies the year that the publisher omits in its cards.
-    begins = local_time(f"{date_text} {year} {times[1]}")
-    finishes = local_time(f"{date_text} {year} {times[2]}") if times[2] else None
-    if begins.month != month:
+    begins = local_time(f"{date_text} {month.year} {times[1]}")
+    finishes = local_time(f"{date_text} {month.year} {times[2]}") if times[2] else None
+    if begins.month != month.month:
         raise ValueError("Calendar ignored its month filter")
     tags = [
         name
@@ -63,25 +63,17 @@ async def collect_trees(
 ) -> SourceCollection:
     """Fetch the calendar's visible month filters; each returns that month's full list."""
     result = SourceCollection()
-    current = window_start.astimezone(ATLANTA).replace(day=1)
-    last = window_end.astimezone(ATLANTA)
-    while (current.year, current.month) <= (last.year, last.month):
-        feed_url = f"{TREES_URL}?month={current:%Y%m}"
+    for month in months(window_start, window_end):
+        feed_url = f"{TREES_URL}?month={month:%Y%m}"
         document = BeautifulSoup(await fetch_bytes(client, feed_url), "html.parser")
         cards = document.select(".event")
         result.records_seen += len(cards)
         if document.select_one("#paginate") is not None:
             result.issues.append(ParseIssue(None, "Monthly calendar unexpectedly paginated"))
         for card in cards:
-            try:
-                if "online store closes" in text(card, "h3").casefold():
-                    continue
-                result.events.append(_tree_event(card, current.year, current.month))
-            except ValueError as exc:
-                result.issues.append(ParseIssue(None, str(exc)))
-        current = current.replace(
-            year=current.year + (current.month == 12), month=current.month % 12 + 1
-        )
+            if "online store closes" not in text(card, "h3").casefold():
+                with result.issue_if_fails(None):
+                    result.events.append(_tree_event(card, month))
     return result
 
 
@@ -93,8 +85,7 @@ def _south_fork_event(card: Tag) -> ParsedEvent:
     url = urljoin(SOUTH_FORK_URL, str(anchor["href"]))
     if urlsplit(url).hostname != "southforkconservancy.org":
         raise ValueError("Unexpected event URL")
-    # The visible Google Calendar link carries UTC times. Read its data only;
-    # there is no need to visit Google or the robot-disallowed ICS endpoint.
+    # The card's Google Calendar link carries the UTC times; nothing else is fetched.
     query = parse_qs(urlsplit(str(export["href"])).query)
     dates = query.get("dates", [""])[0].split("/")
     if len(dates) != 2:
@@ -129,8 +120,6 @@ async def collect_south_fork(
     cards = document.select("article.eventlist-event")
     result = SourceCollection(records_seen=len(cards))
     for card in cards:
-        try:
+        with result.issue_if_fails(None):
             result.events.append(_south_fork_event(card))
-        except ValueError as exc:
-            result.issues.append(ParseIssue(None, str(exc)))
     return result

@@ -2,7 +2,6 @@
 
 import asyncio
 import re
-from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from html import unescape
 from urllib.parse import urljoin, urlsplit
@@ -10,23 +9,21 @@ from xml.etree import ElementTree
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    REGISTRATION,
     PriceStatus,
     cost_price,
     described_price,
     http_url,
-    issue_message,
     location_kind,
     text,
-    validation_message,
 )
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
+from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, issue_message
 from app.storage.models import EventContent
 
+_REGISTRATION = re.compile(r"\b(?:register|registration|rsvp|tickets?|sign[ -]?up)\b", re.I)
 _LABELS = (
     "Summary sentence",
     "Summary",
@@ -48,8 +45,7 @@ _LABEL_PATTERN = re.compile(
     re.MULTILINE,
 )
 
-# The published RSS index incorrectly links seminars to conferences. The seminar
-# listing advertises term 16 in its rel=alternate RSS link.
+# GT's RSS index links seminars to the conference feed; the real seminar feed is term 16.
 FEEDS = {
     "arts": 12,
     "career": 13,
@@ -224,7 +220,7 @@ def _registration_url(soup: BeautifulSoup, source_url: str, description: str) ->
         contextual_link = (
             generic_label
             and context is not None
-            and bool(REGISTRATION.search(context.get_text(" ")))
+            and bool(_REGISTRATION.search(context.get_text(" ")))
         )
         previous = context.find_previous_sibling("p") if context is not None else None
         preceding_instruction = (
@@ -307,11 +303,7 @@ def _parse_item(item: ElementTree.Element, external_id: str) -> ParsedEvent:
 
 
 def parse_feed(xml: bytes) -> SourceCollection:
-    """Return all valid records so callers can merge revisions before filtering dates.
-
-    Invalid records become issues; invalid XML/feed structure fails the entire feed
-    with ValueError. No publication timestamp is used as an event's start time.
-    """
+    """Every valid record; a bad record becomes an issue, and invalid XML fails the feed."""
     if re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", xml, re.I) or b"\x00" in xml:
         raise ValueError("RSS DTD/entity declarations and null bytes are not supported")
     try:
@@ -322,22 +314,10 @@ def parse_feed(xml: bytes) -> SourceCollection:
         raise ValueError("Expected a Georgia Tech RSS channel")
     items = root.findall("./channel/item")
     result = SourceCollection(records_seen=len(items))
-    identities = Counter((item.findtext("guid") or "").strip() for item in items)
     for item in items:
         external_id = (item.findtext("guid") or "").strip()
-        if not external_id:
-            result.issues.append(ParseIssue(None, "Missing stable RSS GUID"))
-            continue
-        if identities[external_id] > 1:
-            result.issues.append(ParseIssue(external_id, "Repeated RSS GUID in the same feed"))
-            continue
-        try:
-            parsed = _parse_item(item, external_id)
-        except ValidationError as exc:
-            result.issues.append(ParseIssue(external_id, validation_message(exc)))
-            continue
-        except ValueError as exc:
-            result.issues.append(ParseIssue(external_id, str(exc)))
-            continue
-        result.events.append(parsed)
+        with result.issue_if_fails(external_id or None):
+            if not external_id:
+                raise ValueError("Missing stable RSS GUID")
+            result.events.append(_parse_item(item, external_id))
     return result

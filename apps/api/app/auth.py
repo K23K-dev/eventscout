@@ -54,8 +54,7 @@ class TokenVerifier:
             raise InvalidToken from exc
 
     async def _key(self, kid: object) -> jwt.PyJWK:
-        # Refresh every ten minutes so revoked keys drop out, and at most once a minute for an
-        # unknown key ID (a rotation), so made-up tokens can't trigger a fetch each.
+        # Refetch every 10 minutes; an unknown key ID refetches at most once a minute.
         async with self._lock:
             age = time.monotonic() - self._fetched_at
             if age > 600 or (kid not in self._keys and age > 60):

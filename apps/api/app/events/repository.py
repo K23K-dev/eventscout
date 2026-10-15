@@ -64,8 +64,7 @@ class EventRepository:
                 if filters.q
                 else sql.SQL("")
             )
-            # Soonest first means what starts in the window, then what was already running
-            # (months-long exhibitions would otherwise fill the first pages).
+            # Upcoming starts first, so months-long exhibitions don't fill the first pages.
             cursor = await self._connection.execute(
                 sql.SQL("""
                     SELECT {}, {}

@@ -1,14 +1,11 @@
-"""Read Emory's public Trumba calendar with bounded, complete date slices."""
+"""Read Emory's public Trumba calendar, the whole import window in one request."""
 
-import asyncio
-import re
-from collections.abc import Sequence
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import datetime, time
 from html import unescape
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from pydantic import BaseModel, Field, HttpUrl, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, HttpUrl, JsonValue, TypeAdapter
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
@@ -20,9 +17,8 @@ from app.ingestion.parsing import (
     http_url,
     image_url,
     text,
-    validation_message,
 )
-from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
+from app.ingestion.records import ParsedEvent, SourceCollection
 from app.storage.models import EventContent
 
 FEED_URL = "https://www.trumba.com/calendars/emory-events.json"
@@ -46,10 +42,11 @@ class _Event(BaseModel):
     eventID: int = Field(strict=True, gt=0)
     title: str
     description: str = ""
+    # Local wall times, each with its own UTC offset such as "-0400".
     startDateTime: str
     endDateTime: str
-    startTimeZoneOffset: str
-    endTimeZoneOffset: str
+    startTimeZoneOffset: str = Field(pattern=r"^[+-]\d{4}$")
+    endTimeZoneOffset: str = Field(pattern=r"^[+-]\d{4}$")
     allDay: bool = Field(strict=True)
     canceled: bool = Field(strict=True)
     requiresPayment: bool = Field(default=False, strict=True)
@@ -64,18 +61,6 @@ def _url(value: str) -> HttpUrl:
         anchor = BeautifulSoup(value, "html.parser").find("a")
         value = str(anchor.get("href")) if isinstance(anchor, Tag) else ""
     return http_url(unescape(value.strip()))
-
-
-def _timestamp(value: str, offset: str) -> datetime:
-    if not re.fullmatch(r"[+-]\d{4}", offset):
-        raise ValueError("Event time needs an explicit UTC offset")
-    parsed = datetime.fromisoformat(value)
-    aware = datetime.fromisoformat(value + offset)
-    # The JSON uses local wall time, verified against Emory's ICS feed. Validate
-    # the supplied offset independently, including both sides of DST changes.
-    if aware.astimezone(ATLANTA).replace(tzinfo=None) != parsed:
-        raise ValueError("Event UTC offset does not match the Emory calendar timezone")
-    return aware.astimezone(UTC)
 
 
 def _price(cost: str, payment_required: bool, description: str) -> tuple[PriceStatus, str | None]:
@@ -97,8 +82,8 @@ def _parse_item(raw: dict[str, JsonValue]) -> ParsedEvent:
             raise ValueError(f"Conflicting custom field: {field.label}")
         fields[label] = field.value
     description = text(event.description)
-    begins = _timestamp(event.startDateTime, event.startTimeZoneOffset)
-    finishes = _timestamp(event.endDateTime, event.endTimeZoneOffset)
+    begins = datetime.fromisoformat(event.startDateTime + event.startTimeZoneOffset)
+    finishes = datetime.fromisoformat(event.endDateTime + event.endTimeZoneOffset)
     start_date = end_date = None
     if event.allDay:
         local_start, local_end = begins.astimezone(ATLANTA), finishes.astimezone(ATLANTA)
@@ -153,74 +138,23 @@ def parse_feed(payload: bytes) -> SourceCollection:
     records = _JSON_EVENTS.validate_json(payload)
     result = SourceCollection(records_seen=len(records))
     for raw in records:
-        external_id = str(raw["eventID"]) if "eventID" in raw else None
-        try:
+        with result.issue_if_fails(str(raw["eventID"]) if "eventID" in raw else None):
             result.events.append(_parse_item(raw))
-        except ValidationError as exc:
-            result.issues.append(ParseIssue(external_id, validation_message(exc)))
-        except ValueError as exc:
-            result.issues.append(ParseIssue(external_id, str(exc)))
     return result
 
 
 async def collect(
     client: httpx.AsyncClient, *, window_start: datetime, window_end: datetime
 ) -> SourceCollection:
-    """Fetch weekly slices, splitting a full response down to individual days.
-
-    A saturated day or failed request is explicitly incomplete. The caller merges
-    overlapping ongoing events by eventID and applies the precise time window.
-    """
-    local_end = window_end.astimezone(ATLANTA)
-    finish = local_end.date() + timedelta(days=int(local_end.time() != time.min))
-    cursor = window_start.astimezone(ATLANTA).date()
-    slices: list[tuple[date, int]] = []
-    while cursor < finish:
-        days = min(7, (finish - cursor).days)
-        slices.append((cursor, days))
-        cursor += timedelta(days=days)
-    semaphore = asyncio.Semaphore(3)
-
-    async def fetch_slice(start: date, days: int) -> SourceCollection:
-        params = {
-            "startdate": start.strftime("%Y%m%d"),
-            "days": str(days),
-            "previousweeks": "0",
-            "events": str(_PAGE_LIMIT),
-        }
-        try:
-            async with semaphore:
-                payload = await fetch_bytes(client, FEED_URL, params=params)
-            parsed = parse_feed(payload)
-        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-            reason = (
-                f"HTTP {exc.response.status_code}"
-                if isinstance(exc, httpx.HTTPStatusError)
-                else type(exc).__name__
-            )
-            issue = ParseIssue(None, f"Emory slice {start} ({days} days): {reason}")
-            return SourceCollection(issues=[issue])
-        if parsed.records_seen >= _PAGE_LIMIT and days > 1:
-            left = days // 2
-            return _combine(
-                await asyncio.gather(
-                    fetch_slice(start, left), fetch_slice(start + timedelta(days=left), days - left)
-                )
-            )
-        if parsed.records_seen >= _PAGE_LIMIT:
-            parsed.issues.append(
-                ParseIssue(
-                    None, f"Emory slice {start} reached {_PAGE_LIMIT} events; incomplete day"
-                )
-            )
-        return parsed
-
-    return _combine(await asyncio.gather(*(fetch_slice(start, days) for start, days in slices)))
-
-
-def _combine(collections: Sequence[SourceCollection]) -> SourceCollection:
-    return SourceCollection(
-        events=[event for collection in collections for event in collection.events],
-        records_seen=sum(collection.records_seen for collection in collections),
-        issues=[issue for collection in collections for issue in collection.issues],
-    )
+    """Fetch the whole window at once; the window holds far fewer events than the cap."""
+    start = window_start.astimezone(ATLANTA).date()
+    params = {
+        "startdate": f"{start:%Y%m%d}",
+        "days": str((window_end.astimezone(ATLANTA).date() - start).days + 1),
+        "previousweeks": "0",
+        "events": str(_PAGE_LIMIT),
+    }
+    result = parse_feed(await fetch_bytes(client, FEED_URL, params=params))
+    if result.records_seen >= _PAGE_LIMIT:
+        result.warnings.append(f"Emory returned its {_PAGE_LIMIT}-event cap; coverage is partial")
+    return result
