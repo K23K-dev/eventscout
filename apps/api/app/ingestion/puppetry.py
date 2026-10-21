@@ -10,9 +10,9 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
-from app.ingestion.parsing import ATLANTA, image_url, months, text
+from app.ingestion.parsing import image_url, months, text
 from app.ingestion.records import ParsedEvent, SourceCollection
-from app.storage.models import EventContent
+from app.storage.models import ATLANTA, EventContent
 
 CALENDAR_URL = "https://puppet.org/calendar"
 _ACTIVITIES = {"Puppet Shows", "Special Events", "Workshops & Classes"}

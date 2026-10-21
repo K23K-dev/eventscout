@@ -10,9 +10,10 @@ from uuid import UUID
 from openai import AsyncOpenAI, OpenAIError
 from pinecone import AsyncIndex, DenseVectorQuery, PineconeError
 
-from app.events.models import CATALOG_TIMEZONE, EventFilters, EventResponse
+from app.events.models import EventFilters, EventResponse
 from app.events.repository import EventRepository
 from app.indexing.worker import EMBEDDING_MODEL, NAMESPACE
+from app.storage.models import ATLANTA
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,8 @@ def fuse(*rankings: list[UUID], k: int = RRF_K) -> list[UUID]:
 
 def vector_filter(filters: EventFilters) -> dict[str, Any]:
     """A loose superset of the structured filters; Postgres applies the exact ones."""
-    start = datetime.combine(filters.date_from, time.min, CATALOG_TIMEZONE)
-    end = datetime.combine(filters.end_date, time.min, CATALOG_TIMEZONE)
+    start = datetime.combine(filters.date_from, time.min, ATLANTA)
+    end = datetime.combine(filters.end_date, time.min, ATLANTA)
     clauses: dict[str, Any] = {
         "starts_at": {"$lt": int(end.timestamp())},
         "ends_at": {"$gte": int(start.timestamp())},

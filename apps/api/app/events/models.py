@@ -3,14 +3,10 @@
 from datetime import date, datetime, timedelta
 from typing import Literal, Self
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.storage.models import EventContent, SourceInput
-
-CATALOG_TIMEZONE = ZoneInfo("America/New_York")
-
+from app.storage.models import ATLANTA, EventContent, SourceInput
 
 # The categories enrichment assigns, 1-3 per event.
 Topic = Literal[
@@ -46,7 +42,7 @@ class EventFilters(BaseModel):
     q: str | None = Field(default=None, max_length=200)
     # Calendar dates in America/New_York; date_to is exclusive and defaults to 30 days later.
     date_from: date = Field(
-        default_factory=lambda: datetime.now(CATALOG_TIMEZONE).date(),
+        default_factory=lambda: datetime.now(ATLANTA).date(),
         ge=date(1900, 1, 1),
         le=date(2100, 1, 1),
     )

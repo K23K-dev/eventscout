@@ -14,7 +14,6 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes, fetch_pages
 from app.ingestion.parsing import (
-    ATLANTA,
     MEMBERS_ONLY,
     described_price,
     http_url,
@@ -23,7 +22,7 @@ from app.ingestion.parsing import (
     text,
 )
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection
-from app.storage.models import EventContent
+from app.storage.models import ATLANTA, EventContent
 
 LISTING_URL = "https://atlantatechvillage.com/events"
 

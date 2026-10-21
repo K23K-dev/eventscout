@@ -19,6 +19,8 @@ from pydantic import (
     model_validator,
 )
 
+# Every calendar publishes Atlanta wall-clock times.
+ATLANTA = ZoneInfo("America/New_York")
 _CANCELLED_TITLE = re.compile(r"^[\s*\[(]*(?:cancelled|canceled)\b", re.I)
 
 
@@ -47,7 +49,7 @@ class EventContent(_FrozenModel):
     all_day: bool = False
     start_date: date | None = None
     end_date: date | None = None
-    timezone: str = "America/New_York"
+    timezone: str = ATLANTA.key
     venue: str | None = None
     location_kind: Literal["in_person", "online", "hybrid", "unknown"] = "unknown"
     region: Literal["gt", "atlanta"] = "atlanta"

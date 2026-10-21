@@ -29,9 +29,9 @@ from app.assistant.models import (
 from app.assistant.store import ConversationStore, TurnInProgress
 from app.auth import InvalidToken, KeysUnavailable, TokenVerifier
 from app.database import connect_database
-from app.events.models import CATALOG_TIMEZONE
 from app.events.repository import EventRepository
 from app.settings import Settings
+from app.storage.models import ATLANTA
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ def create_assistant_router(settings: Settings, tasks: AnswerTasks) -> APIRouter
         started: StartedTurn, events: asyncio.Queue[ServerSentEvent | None]
     ) -> None:
         """Answer and save the turn even if the client leaves; the stream only relays events."""
-        today = datetime.now(CATALOG_TIMEZONE).date()
+        today = datetime.now(ATLANTA).date()
         assert settings.openai_api_key and settings.pinecone_api_key  # start_turn checked them
         try:
             async with connect_database(settings) as connection:

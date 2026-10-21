@@ -16,9 +16,10 @@ from psycopg import AsyncConnection
 from pydantic import BaseModel, Field
 
 from app.assistant.intent import SearchIntent, SearchState, apply_intent, parse_intent
-from app.events.models import CATALOG_TIMEZONE, EventResponse
+from app.events.models import EventResponse
 from app.events.repository import EventRepository
 from app.search.retrieval import search_events
+from app.storage.models import ATLANTA
 
 logger = logging.getLogger(__name__)
 
@@ -309,10 +310,10 @@ def _when(event: EventResponse) -> str:
         return f"{span}, all day"
     if event.starts_at is None:
         return "not listed"
-    start = event.starts_at.astimezone(CATALOG_TIMEZONE)
+    start = event.starts_at.astimezone(ATLANTA)
     text = f"{_day(start.date())}, {_clock(start)}"
     if event.ends_at is not None:
-        end = event.ends_at.astimezone(CATALOG_TIMEZONE)
+        end = event.ends_at.astimezone(ATLANTA)
         same_day = end.date() == start.date()
         text += f" to {_clock(end)}" if same_day else f" to {_day(end.date())}, {_clock(end)}"
     return text

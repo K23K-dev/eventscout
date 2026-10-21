@@ -4,6 +4,7 @@ import json
 from datetime import date, timedelta
 from typing import Any, Literal
 
+from dateutil.relativedelta import relativedelta
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
@@ -166,9 +167,10 @@ def resolve_dates(
             start = today + timedelta(days=7 - weekday)
             end = start + timedelta(days=7)
         case "this_month":
-            start, end = today, _month_start(today, 1)
+            start, end = today, today.replace(day=1) + relativedelta(months=1)
         case "next_month":
-            start, end = _month_start(today, 1), _month_start(today, 2)
+            start = today.replace(day=1) + relativedelta(months=1)
+            end = start + relativedelta(months=1)
         case "next_days":
             start, end = today, today + timedelta(days=max(request.days or 7, 1))
         case "between":
@@ -179,8 +181,3 @@ def resolve_dates(
 
 def _change(change: str, current: str | None) -> str | None:
     return current if change == "unchanged" else None if change == "any" else change
-
-
-def _month_start(day: date, months_ahead: int) -> date:
-    month = day.month - 1 + months_ahead
-    return date(day.year + month // 12, month % 12 + 1, 1)

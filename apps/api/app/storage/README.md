@@ -29,13 +29,11 @@ Several source records can point at one occurrence, which is how duplicates acro
 
 ## Writes
 
-`EventStore.upsert_group` saves one group (a real-world event and every calendar listing of it) in a single transaction:
+`EventStore.upsert_group` saves one group (a real-world event and every calendar listing of it) in a single transaction. It needs no row locks: only one import runs at a time, and the matcher gives each of its writers different events.
 
-1. **Locking.** It takes advisory locks on each source identity, then row locks on the canonical events involved, so concurrent writers can't interleave on the same event.
-2. **Stale checks.** It refuses a stale write: an observation older than the stored one, an older source revision, or different content at the same observation time. The runner reports these as issues and moves on.
-3. **Canonical event.** It inserts or updates the canonical event from the group's primary observation.
-4. **Merges.** It applies any merges the matcher decided on, refusing to merge an event into itself or into one already merged elsewhere.
-5. **Source records.** It upserts each source record with its own content, picture URL and shared-listing flag.
+1. **Canonical event.** It inserts or updates the canonical event from the group's primary observation.
+2. **Merges.** It applies any merges the matcher decided on, refusing to merge an event into itself or into one already merged elsewhere.
+3. **Source records.** It upserts each source record with its own content, picture URL and shared-listing flag.
 
 Two triggers finish the job inside the same transaction:
 

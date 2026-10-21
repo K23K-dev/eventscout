@@ -16,7 +16,7 @@ from app.ingestion.records import ParsedEvent, in_window
 from app.ingestion.sources import SOURCES, CalendarSource
 from app.settings import Settings
 from app.storage.models import EventContent, EventObservation
-from app.storage.store import EventStore, StaleObservationError
+from app.storage.store import EventStore
 
 logger = logging.getLogger(__name__)
 _PRIORITY = {slug: index for index, slug in enumerate(SOURCES)}
@@ -200,7 +200,6 @@ async def run_import(settings: Settings, *, source_names: list[str] | None = Non
             raise RuntimeError("Another catalog import is already running")
         store = EventStore(connection)
         source_ids: dict[str, UUID] = {}
-        summaries = {summary.source: summary for summary in report.sources}
         catalog = await _catalog(connection)
         for source in sources:
             source_ids[source.config.slug] = (await store.upsert_source(source.config)).id
@@ -217,35 +216,27 @@ async def run_import(settings: Settings, *, source_names: list[str] | None = Non
                 for group in pending:
                     primary = group.primary
                     members = sorted(group.observations, key=lambda member: member is not primary)
-                    try:
-                        await writer_store.upsert_group(
-                            [
-                                EventObservation(
-                                    source_id=source_ids[member.source],
-                                    external_id=member.event.external_id,
-                                    content=member.event.content,
-                                    observed_at=observed_at,
-                                    source_updated_at=member.event.source_updated_at,
-                                    raw_payload={
-                                        "image_url": member.event.image_url,
-                                        "source_url_is_collection": (
-                                            member.event.source_url_is_collection
-                                        ),
-                                    },
-                                )
-                                for member in members
-                            ],
-                            canonical_event_id=group.event_id,
-                            merge_ids=group.merge_ids,
-                            update_content=primary is not None,
-                        )
-                    except StaleObservationError:
-                        for member in members:
-                            summaries[member.source].issues.append(
-                                f"{member.event.external_id}: newer observation stored; "
-                                "group unchanged"
+                    await writer_store.upsert_group(
+                        [
+                            EventObservation(
+                                source_id=source_ids[member.source],
+                                external_id=member.event.external_id,
+                                content=member.event.content,
+                                observed_at=observed_at,
+                                source_updated_at=member.event.source_updated_at,
+                                raw_payload={
+                                    "image_url": member.event.image_url,
+                                    "source_url_is_collection": (
+                                        member.event.source_url_is_collection
+                                    ),
+                                },
                             )
-                        continue
+                            for member in members
+                        ],
+                        canonical_event_id=group.event_id,
+                        merge_ids=group.merge_ids,
+                        update_content=primary is not None,
+                    )
                     completed += 1
                     if completed % 250 == 0 or completed == len(groups):
                         logger.info("Stored %s/%s unique event groups", completed, len(groups))

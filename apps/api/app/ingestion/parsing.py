@@ -5,18 +5,16 @@ from datetime import date, datetime
 from html import unescape
 from typing import Literal
 from urllib.parse import urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup, Tag
 from dateutil import parser
 from dateutil.rrule import MONTHLY, rrule
 from pydantic import HttpUrl
 
+from app.storage.models import ATLANTA
+
 LocationKind = Literal["in_person", "online", "hybrid", "unknown"]
 PriceStatus = Literal["free", "paid", "conditional", "unknown"]
-
-# Every calendar publishes Atlanta wall-clock times.
-ATLANTA = ZoneInfo("America/New_York")
 
 MEMBERS_ONLY = re.compile(r"\bmembers?[- ]only\b", re.I)
 

@@ -53,7 +53,7 @@ Every adapter returns a `SourceCollection` (`records.py`): parsed events, record
 
 Shared code:
 - `http.py` bounds every download to 60 seconds and 20 MiB, and fetches detail pages two at a time, half a second apart.
-- `parsing.py` holds the cross-publisher rules: visible text, online/in-person detection, free/paid wording, Atlanta wall-clock times, and the months an import window touches. Every calendar publishes local times, so `ATLANTA` is the one timezone.
+- `parsing.py` holds the cross-publisher rules: visible text, online/in-person detection, free/paid wording, Atlanta wall-clock times, and the months an import window touches. Every calendar publishes local times, so one `ATLANTA` timezone (in `storage/models.py`) covers them.
 - `icalendar_feed.py` reads iCalendar exports for the iCal-based adapters.
 
 ## Parsing policy

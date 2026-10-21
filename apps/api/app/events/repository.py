@@ -6,8 +6,8 @@ from uuid import UUID
 
 from psycopg import AsyncConnection, sql
 
-from app.events.models import CATALOG_TIMEZONE, EventFilters, EventPage, EventResponse
-from app.storage.models import EventContent
+from app.events.models import EventFilters, EventPage, EventResponse
+from app.storage.models import ATLANTA, EventContent
 
 _PUBLIC_COLUMNS = sql.SQL(", ").join(
     sql.Identifier("e", name) for name in ("id", *EventContent.model_fields)
@@ -135,8 +135,8 @@ class EventRepository:
 
     def _search_conditions(self, filters: EventFilters) -> tuple[sql.Composed, dict[str, Any]]:
         parameters: dict[str, Any] = {
-            "window_start": datetime.combine(filters.date_from, time.min, CATALOG_TIMEZONE),
-            "window_end": datetime.combine(filters.end_date, time.min, CATALOG_TIMEZONE),
+            "window_start": datetime.combine(filters.date_from, time.min, ATLANTA),
+            "window_end": datetime.combine(filters.end_date, time.min, ATLANTA),
         }
         clauses: list[sql.Composable] = [
             sql.SQL("e.merged_into IS NULL AND e.status = 'scheduled'"),

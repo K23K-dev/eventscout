@@ -16,9 +16,9 @@ from app.ingestion.icalendar_feed import (
     calendar_text,
     parse_calendar_events,
 )
-from app.ingestion.parsing import ATLANTA, http_url, location_kind
+from app.ingestion.parsing import http_url, location_kind
 from app.ingestion.records import ParsedEvent, SourceCollection
-from app.storage.models import EventContent
+from app.storage.models import ATLANTA, EventContent
 
 CALENDARS = {
     "dekalb": "https://events.dekalblibrary.org",

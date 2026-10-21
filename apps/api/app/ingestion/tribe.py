@@ -13,7 +13,6 @@ from pydantic import HttpUrl
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    ATLANTA,
     MEMBERS_ONLY,
     cost_price,
     image_url,
@@ -21,7 +20,7 @@ from app.ingestion.parsing import (
     text,
 )
 from app.ingestion.records import ParsedEvent, ParseIssue, SourceCollection, issue_message
-from app.storage.models import EventContent
+from app.storage.models import ATLANTA, EventContent
 
 _ARTSATL_WEEKLY_SERIES = {
     "uptown-market-atlanta-2": (r"\bevery Saturday\b", 5, 11),

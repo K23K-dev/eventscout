@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field, HttpUrl, JsonValue, TypeAdapter
 
 from app.ingestion.http import fetch_bytes
 from app.ingestion.parsing import (
-    ATLANTA,
     LocationKind,
     PriceStatus,
     cost_price,
@@ -19,7 +18,7 @@ from app.ingestion.parsing import (
     text,
 )
 from app.ingestion.records import ParsedEvent, SourceCollection
-from app.storage.models import EventContent
+from app.storage.models import ATLANTA, EventContent
 
 FEED_URL = "https://www.trumba.com/calendars/emory-events.json"
 _CALENDAR_URL = "https://www.trumba.com/calendars/emory-events"
